@@ -1,0 +1,109 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: sessions
+    // Fields:
+    //   - focusActive: bool (required)
+    //   - adminDeviceId: string (required, immutable)
+    //   - timestamp: number (required)
+    //   - timerSeconds: number (required)
+    //   - status: string (required, enum: lobby, active, paused, ended)
+    //
+    // Collection: sessions/{sessionId}/buddies
+    // Fields:
+    //   - name: string (required)
+    //   - deviceId: string (required, immutable)
+    //   - faceImage: string (optional)
+    //   - status: string (required, enum: pending, approved, rejected)
+    //   - whitelistedApps: list (optional)
+    //   - lastFaceMatch: bool (optional)
+    //   - requestStop: bool (optional)
+    //   - isOnline: bool (optional)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getSession(sessionId) {
+      return get(/databases/$(database)/documents/sessions/$(sessionId)).data;
+    }
+
+    function isAdminOfSession(sessionId) {
+      return isAuthenticated() && request.auth.uid == getSession(sessionId).adminDeviceId;
+    }
+
+    // Domain Validators
+    function isValidSession(data) {
+      return data.focusActive is bool &&
+             data.adminDeviceId is string &&
+             data.timestamp is timestamp &&
+             data.timerSeconds is number &&
+             data.status in ['lobby', 'countdown', 'active', 'paused', 'ended'] &&
+             (!('startTime' in data) || data.startTime is timestamp || data.startTime == null) &&
+             (!('endedAt' in data) || data.endedAt is timestamp || data.endedAt == null);
+    }
+
+    function isValidBuddy(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.deviceId is string &&
+             data.status in ['pending', 'approved', 'rejected'] &&
+             (!('whitelistedApps' in data) || data.whitelistedApps is list) &&
+             (!('installedApps' in data) || data.installedApps is list) &&
+             (!('requestStop' in data) || data.requestStop is bool) &&
+             (!('requestPause' in data) || data.requestPause is bool);
+    }
+
+    match /sessions/{sessionId} {
+      allow read: if isAuthenticated();
+      
+      allow create: if isAuthenticated() && 
+                      isValidSession(request.resource.data) &&
+                      request.resource.data.adminDeviceId == request.auth.uid;
+                      
+      allow update: if isAuthenticated() && 
+                      resource.data.adminDeviceId == request.auth.uid &&
+                      isValidSession(request.resource.data) &&
+                      request.resource.data.adminDeviceId == resource.data.adminDeviceId;
+
+      match /buddies/{buddyId} {
+        allow read: if isAuthenticated();
+        
+        allow create: if isAuthenticated() && 
+                        buddyId == request.auth.uid &&
+                        isValidBuddy(request.resource.data) &&
+                        request.resource.data.deviceId == request.auth.uid;
+                        
+        allow update: if isAuthenticated() && 
+                        (buddyId == request.auth.uid || isAdminOfSession(sessionId)) &&
+                        isValidBuddy(request.resource.data) &&
+                        request.resource.data.deviceId == resource.data.deviceId;
+                        
+        allow delete: if isAuthenticated() && 
+                        (buddyId == request.auth.uid || isAdminOfSession(sessionId));
+      }
+    }
+    
+    // User profile for bootstrapping
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+
+    // Connection test document
+    match /test/connection {
+      allow read: if isAuthenticated();
+    }
+  }
+}

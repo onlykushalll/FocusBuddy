@@ -1,0 +1,47 @@
+{
+  "entities": {
+    "Session": {
+      "title": "Focus Session",
+      "description": "A remote-controlled focus session",
+      "type": "object",
+      "properties": {
+        "focusActive": { "type": "boolean" },
+        "adminDeviceId": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "timerSeconds": { "type": "number" },
+        "status": { "type": "string", "enum": ["lobby", "countdown", "active", "paused", "ended"] },
+        "startTime": { "type": "number" },
+        "endedAt": { "type": "number" }
+      },
+      "required": ["focusActive", "adminDeviceId", "timestamp", "timerSeconds", "status"]
+    },
+    "Buddy": {
+      "title": "Buddy Device",
+      "description": "A student device in a session",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "faceImage": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "installedApps": { "type": "array", "items": { "type": "string" } },
+        "whitelistedApps": { "type": "array", "items": { "type": "string" } },
+        "lastFaceMatch": { "type": "boolean" },
+        "requestStop": { "type": "boolean" },
+        "requestPause": { "type": "boolean" },
+        "isOnline": { "type": "boolean" }
+      },
+      "required": ["name", "deviceId", "status"]
+    }
+  },
+  "firestore": {
+    "/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Active and past focus sessions"
+    },
+    "/sessions/{sessionId}/buddies/{buddyId}": {
+      "schema": "Buddy",
+      "description": "Buddies connected to a specific session"
+    }
+  }
+}

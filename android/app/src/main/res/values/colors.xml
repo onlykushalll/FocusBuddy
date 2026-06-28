@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#707A3E</color>
+    <color name="primary_variant">#555D2F</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="secondary">#E1E8C1</color>
+    <color name="on_secondary">#1A1C0E</color>
+    <color name="background">#FDFBF0</color>
+    <color name="on_background">#1A1C0E</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="on_surface">#1A1C0E</color>
+    <color name="error">#B00020</color>
+    
+    <!-- Legacy colors for compatibility -->
+    <color name="purple_200">#707A3E</color>
+    <color name="purple_500">#707A3E</color>
+    <color name="purple_700">#555D2F</color>
+    <color name="teal_200">#E1E8C1</color>
+    <color name="teal_700">#E1E8C1</color>
+    <color name="black">#1A1C0E</color>
+    <color name="white">#FFFFFF</color>
+</resources>

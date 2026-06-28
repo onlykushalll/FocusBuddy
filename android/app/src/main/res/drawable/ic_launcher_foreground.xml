@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Background Circle -->
+    <path
+        android:fillColor="#E1E8C1"
+        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0" />
+        
+    <!-- Two Buddies (Simplified Vector) -->
+    <group android:translateX="34" android:translateY="34">
+        <!-- Buddy 1 -->
+        <path
+            android:fillColor="#707A3E"
+            android:pathData="M10,8c2.21,0 4,-1.79 4,-4s-1.79,-4 -4,-4 -4,1.79 -4,4 1.79,4 4,4zM10,10c-2.67,0 -8,1.34 -8,4v2h16v-2c0,-2.66 -5.33,-4 -8,-4z" />
+        <!-- Buddy 2 (Arm around) -->
+        <path
+            android:fillColor="#707A3E"
+            android:pathData="M30,8c2.21,0 4,-1.79 4,-4s-1.79,-4 -4,-4 -4,1.79 -4,4 1.79,4 4,4zM30,10c-2.67,0 -8,1.34 -8,4v2h16v-2c0,-2.66 -5.33,-4 -8,-4z" />
+        <!-- Connecting Arm -->
+        <path
+            android:fillColor="#707A3E"
+            android:pathData="M14,12h12v2h-12z" />
+    </group>
+</vector>

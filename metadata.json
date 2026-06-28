@@ -1,0 +1,8 @@
+{
+  "name": "Focus Buddy",
+  "description": "A remote-controlled focus session app for students, allowing an admin device to restrict a buddy device to whitelisted apps during study sessions.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
