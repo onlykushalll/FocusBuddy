@@ -56,9 +56,8 @@ service cloud.firestore {
     }
 
     match /sessions/{sessionId} {
-      // Only admin and buddies can read session details (prevents enumeration)
-      allow read: if isAdminOfSession(sessionId) || 
-                    (isAuthenticated() && request.auth.uid in resource.data.buddyIds);
+      allow get: if isAuthenticated();
+      allow list: if isAuthenticated() && (resource.data.adminDeviceId == request.auth.uid);
       
       allow create: if isAuthenticated() && 
                       isValidSession(request.resource.data) &&
