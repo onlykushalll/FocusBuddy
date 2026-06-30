@@ -66,24 +66,28 @@ service cloud.firestore {
                       request.resource.data.focusActive == false;
                       
       allow update: if isAuthenticated() &&
-                      isValidSession(request.resource.data) &&
-                      request.resource.data.adminDeviceId == resource.data.adminDeviceId &&
                       (
-                        // Admin: full update authority
-                        resource.data.adminDeviceId == request.auth.uid ||
-                        // Buddy joining: only adds self to buddyIds (no removals, no others)
+                        // Admin: full update authority (validates complete schema)
+                        (
+                          resource.data.adminDeviceId == request.auth.uid &&
+                          request.resource.data.adminDeviceId == resource.data.adminDeviceId &&
+                          isValidSession(request.resource.data)
+                        ) ||
+                        // Buddy joining: only adds self to buddyIds (no validation on unmodified fields needed)
                         (
                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['buddyIds']) &&
-                          request.auth.uid in request.resource.data.buddyIds &&
+                          request.resource.data.buddyIds.hasAny([request.auth.uid]) &&
                           request.resource.data.buddyIds.hasAll(resource.data.buddyIds) &&
                           request.resource.data.buddyIds.size() <= resource.data.buddyIds.size() + 1
                         ) ||
                         // Buddy auto-end: timer expired, can only set status to ended
                         (
-                          request.auth.uid in resource.data.buddyIds &&
+                          resource.data.buddyIds.hasAny([request.auth.uid]) &&
                           resource.data.status in ['active', 'paused'] &&
                           request.resource.data.status == 'ended' &&
-                          request.resource.data.focusActive == false
+                          request.resource.data.focusActive == false &&
+                          request.resource.data.adminDeviceId == resource.data.adminDeviceId &&
+                          isValidSession(request.resource.data)
                         )
                       );
 
