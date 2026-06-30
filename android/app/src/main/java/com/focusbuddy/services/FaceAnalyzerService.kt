@@ -218,15 +218,6 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
             return
         }
 
-        // Watchdog: Force-bring MainActivity to the front if focus session is active
-        if (GlobalState.isSessionActive) {
-            val intent = Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(intent)
-        }
-
         val report = SecurityChecker.checkAll(this)
 
         if (report.hasAnyThreat) {
