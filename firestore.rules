@@ -77,8 +77,7 @@ service cloud.firestore {
                         (
                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['buddyIds']) &&
                           request.resource.data.buddyIds.hasAny([request.auth.uid]) &&
-                          request.resource.data.buddyIds.hasAll(resource.data.buddyIds) &&
-                          request.resource.data.buddyIds.size() <= resource.data.buddyIds.size() + 1
+                          request.resource.data.buddyIds.hasAll(resource.data.buddyIds)
                         ) ||
                         // Buddy auto-end: timer expired, can only set status to ended
                         (

@@ -1999,9 +1999,12 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
       };
 
       // Add self to buddyIds for discovery after cache clear
-      const { arrayUnion } = await import('firebase/firestore');
+      const currentBuddyIds: string[] = sessionData.buddyIds || [];
+      if (!currentBuddyIds.includes(user.uid)) {
+        currentBuddyIds.push(user.uid);
+      }
       await updateDoc(doc(db, 'sessions', sessionCode), {
-        buddyIds: arrayUnion(user.uid)
+        buddyIds: currentBuddyIds
       });
 
       await setDoc(doc(db, 'sessions', sessionCode, 'buddies', user.uid), buddyData);
