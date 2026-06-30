@@ -964,10 +964,10 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
 
   const createSession = async () => {
     const generateSessionCode = (): string => {
-      const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // no 0/O/1/I/L
-      const bytes = new Uint8Array(10);
+      const bytes = new Uint32Array(1);
       crypto.getRandomValues(bytes);
-      return Array.from(bytes).map(b => alphabet[b % alphabet.length]).join('');
+      const codeNum = bytes[0] % 1000000;
+      return codeNum.toString().padStart(6, '0');
     };
     const code = generateSessionCode();
     const finalDuration = customDuration ? parseInt(customDuration) : duration;
