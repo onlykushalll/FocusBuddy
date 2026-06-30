@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Block all cleartext traffic -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Pin Firebase API certificates -->
+    <domain-config>
+        <domain includeSubdomains="true">firestore.googleapis.com</domain>
+        <domain includeSubdomains="true">identitytoolkit.googleapis.com</domain>
+        <domain includeSubdomains="true">firebaseio.com</domain>
+        <pin-set expiration="2026-12-31">
+            <!-- Google Trust Services GTS Root R1 (primary) -->
+            <pin digest="SHA-256">YLh1dUR9y6Kja30RrAn7JKnbQG/uEtLMkBgFF2Fuihg=</pin>
+            <!-- GlobalSign Root CA (backup) -->
+            <pin digest="SHA-256">VosN1gAmIy2EVC8M8g5ZJj2nWsRwiQqOefgLCQwpBpw=</pin>
+            <!-- Google Backup -->
+            <pin digest="SHA-256">lCppFqbkrlJ3EcVFAkeip0+44VaoJUymbnOaEUk7tEU=</pin>
+        </pin-set>
+    </domain-config>
+
+    <!-- Debug-only config for local testing -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

@@ -23,7 +23,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -36,6 +37,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
@@ -61,6 +63,10 @@ dependencies {
     // Firebase (Direct versions for stability)
     implementation("com.google.firebase:firebase-firestore-ktx:25.0.0")
     implementation("com.google.firebase:firebase-auth-ktx:23.0.0")
+    implementation("com.google.firebase:firebase-appcheck-playintegrity:17.1.0")
+    
+    // WebKit (for WebViewAssetLoader)
+    implementation("androidx.webkit:webkit:1.11.0")
     
     // CameraX
     implementation("androidx.camera:camera-camera2:1.3.0-rc01")

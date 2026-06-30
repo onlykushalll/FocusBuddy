@@ -6,3 +6,22 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# FocusBuddy Secrets
+firebase-applet-config.json
+google-services.json
+**/google-services.json
+
+# Android Build Outputs & Gradle Caches
+.gradle/
+**/build/
+android/app/src/main/assets/
+android/GradleWelcomeOutputNormalizer.groovy
+android/GradleWorkerMain.java
+android/GradleWrapperMain.java
+android/GradlewRunner.java
+
+# Editor Settings
+.vscode/
+local.properties
+**/local.properties

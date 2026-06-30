@@ -38,7 +38,9 @@ class AppBlockAccessibilityService : AccessibilityService() {
             "com.motorola.settings", "com.android.packageinstaller", "com.google.android.packageinstaller",
             "com.samsung.android.packageinstaller", "com.miui.packageinstaller", "com.huawei.packagemanager",
             "com.sec.android.app.packageinstaller", "com.coloros.packageinstaller", "com.android.development",
-            "com.android.developer", "com.android.permissioncontroller"
+            "com.android.developer", "com.android.permissioncontroller",
+            "com.google.android.googlequicksearchbox", "com.google.android.voiceinteraction",
+            "com.google.android.apps.assistant", "com.android.bluetooth"
         )
 
         private val ALWAYS_ALLOWED_SYSTEM = setOf(
@@ -90,6 +92,32 @@ class AppBlockAccessibilityService : AccessibilityService() {
             return
         }
         val pkg = event?.packageName?.toString() ?: return
+
+        // Block notification shade expansion
+        if (pkg == "com.android.systemui" || pkg == "com.samsung.android.systemui") {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                val className = event.className?.toString() ?: ""
+                if (className.contains("StatusBar") || 
+                    className.contains("ExpandedDesktop") ||
+                    className.contains("NotificationPanel") ||
+                    className.contains("QuickSettings") ||
+                    className.contains("com.android.systemui.statusbar.phone.StatusBar")) {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    Log.i(TAG, "Blocked notification shade expansion")
+                    return
+                }
+            }
+        }
+
+        // Block Google Assistant overlay
+        if (pkg == "com.google.android.googlequicksearchbox" ||
+            pkg == "com.google.android.voiceinteraction" ||
+            pkg == "com.google.android.apps.assistant") {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            firePullback()
+            return
+        }
+
         val now = System.currentTimeMillis()
         if (pkg == lastEvaluatedPackage && now - lastDebounceMs < INSTANT_DEBOUNCE_MS) return
         lastEvaluatedPackage = pkg
@@ -100,7 +128,7 @@ class AppBlockAccessibilityService : AccessibilityService() {
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         if (!GlobalState.isSessionActive || event == null) return false
         return when (event.keyCode) {
-            KeyEvent.KEYCODE_APP_SWITCH -> true
+            KeyEvent.KEYCODE_APP_SWITCH, KeyEvent.KEYCODE_HOME, KeyEvent.KEYCODE_BACK -> true
             else -> false
         }
     }
@@ -109,7 +137,7 @@ class AppBlockAccessibilityService : AccessibilityService() {
         if (!GlobalState.isSessionActive) return
         if (HARD_BLOCKED_PACKAGES.contains(pkg)) {
             onBlockedAppDetected(pkg)
-        } else if (pkg == packageName || ALWAYS_ALLOWED_SYSTEM.contains(pkg) || GlobalState.whitelistedApps.contains(pkg)) {
+        } else if (pkg == packageName || ALWAYS_ALLOWED_SYSTEM.contains(pkg) || WhitelistManager.isAllowed(pkg)) {
             resetPersistenceState()
         } else {
             onBlockedAppDetected(pkg)

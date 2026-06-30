@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import com.focusbuddy.managers.WhitelistManager
 import org.json.JSONArray
 import org.json.JSONException
+import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -12,9 +13,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object GlobalState {
 
-    private const val PREFS_NAME              = "FocusBuddyState"
-    private const val KEY_SESSION_ACTIVE       = "session_active"
-    private const val KEY_WHITELIST            = "whitelisted_apps"
+    private const val PREFS_NAME = "FocusBuddyState"
+    private const val KEY_SESSION_ACTIVE = "session_active"
+    private const val KEY_WHITELIST = "whitelisted_apps"
+    private const val KEY_SESSION_TOKEN = "session_token"
+    private const val KEY_SESSION_ID = "session_id"
+    private const val KEY_BUDDY_ID = "buddy_id"
 
     private val _sessionActive = AtomicBoolean(false)
 
@@ -22,7 +26,15 @@ object GlobalState {
         get() = _sessionActive.get()
         set(value) {
             val changed = _sessionActive.getAndSet(value) != value
-            if (changed) persistAsync()
+            if (changed) {
+                if (!value) {
+                    // Clear token and IDs on session end
+                    _sessionToken = ""
+                    sessionId = ""
+                    buddyId = ""
+                }
+                persistAsync()
+            }
         }
 
     @Volatile
@@ -36,6 +48,34 @@ object GlobalState {
     @Volatile
     var lastPullbackTime: Long = 0L
 
+    // Persisted IDs for foreground service recovery on reboot
+    @Volatile
+    var sessionId: String = ""
+        set(value) {
+            field = value
+            persistAsync()
+        }
+
+    @Volatile
+    var buddyId: String = ""
+        set(value) {
+            field = value
+            persistAsync()
+        }
+
+    // Session token for JS bridge authentication
+    @Volatile
+    private var _sessionToken: String = ""
+
+    fun setSessionToken(token: String) {
+        _sessionToken = token
+        persistAsync()
+    }
+
+    fun validateSessionToken(token: String): Boolean {
+        return _sessionToken.isNotEmpty() && token == _sessionToken
+    }
+
     @Volatile private var prefs: SharedPreferences? = null
 
     fun init(context: Context) {
@@ -45,6 +85,9 @@ object GlobalState {
 
         _sessionActive.set(p.getBoolean(KEY_SESSION_ACTIVE, false))
         whitelistedApps = loadWhitelist(p)
+        _sessionToken = p.getString(KEY_SESSION_TOKEN, "") ?: ""
+        sessionId = p.getString(KEY_SESSION_ID, "") ?: ""
+        buddyId = p.getString(KEY_BUDDY_ID, "") ?: ""
     }
 
     private fun loadWhitelist(p: SharedPreferences): List<String> {
@@ -64,6 +107,18 @@ object GlobalState {
         p.edit()
             .putBoolean(KEY_SESSION_ACTIVE, _sessionActive.get())
             .putString(KEY_WHITELIST, arr.toString())
+            .putString(KEY_SESSION_TOKEN, _sessionToken)
+            .putString(KEY_SESSION_ID, sessionId)
+            .putString(KEY_BUDDY_ID, buddyId)
             .apply()
+    }
+
+    // Generate a cryptographically secure session token
+    fun generateSessionToken(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        return android.util.Base64.encodeToString(
+            bytes, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
+        )
     }
 }

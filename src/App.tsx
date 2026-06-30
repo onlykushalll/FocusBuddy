@@ -64,11 +64,13 @@ declare global {
       isAccessibilityEnabled: () => boolean;
       shareSessionCode: (code: string) => void;
       copyToClipboard: (text: string) => void;
-      startFocusSession: (whitelistJson: string) => void;
-      stopFocusSession: () => void;
+      setSessionToken: (token: string) => void;
+      generateSessionToken: () => string;
+      startFocusSession: (whitelistJson: string, sessionId: string, buddyId: string, sessionToken: string) => void;
+      stopFocusSession: (sessionToken: string) => void;
       getInstalledApps: () => string; // Returns JSON string of AppInfo[]
       getAppIcon: (packageName: string) => string; // Returns Base64 string
-      launchApp: (packageName: string) => void;
+      launchApp: (packageName: string, sessionToken: string) => void;
       isScreenOn: () => boolean;
     };
   }
@@ -209,6 +211,7 @@ interface Buddy {
   requestStop: boolean;
   requestPause: boolean;
   isOnline: boolean;
+  securityAlert?: string | null;
 }
 
 // --- Components ---
@@ -230,7 +233,7 @@ function FaceRegistration({ onComplete, onCancel }: { onComplete: (descriptor: s
       <div className="mt-8 text-center space-y-4 max-w-sm">
         <h3 className="text-xl font-black tracking-tight">Biometric Registration</h3>
         <p className="text-sm text-neutral-500 font-medium leading-relaxed">
-          Look directly at the camera. The AI is creating a secure identity profile. This data never leaves your device.
+          Look directly at the camera. The verification engine is creating a secure identity profile. This data never leaves your device.
         </p>
         
         <div className="pt-4 flex flex-col gap-2 w-full">
@@ -298,13 +301,13 @@ export default function App() {
     };
   }, []);
 
-  // Persistence check on mount
-  useEffect(() => {
-    const savedRole = localStorage.getItem('active_role') as Role;
-    if (savedRole) {
-      setRole(savedRole);
-    }
-  }, []);
+  // Persistence check on mount - commented out to always show the role selection screen on startup
+  // useEffect(() => {
+  //   const savedRole = localStorage.getItem('active_role') as Role;
+  //   if (savedRole) {
+  //     setRole(savedRole);
+  //   }
+  // }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -466,9 +469,25 @@ export default function App() {
                 )}
               </motion.div>
             ) : role === 'ADMIN' ? (
-              <AdminFlow key="admin" onBack={() => setRole(null)} user={user!} />
+              <AdminFlow 
+                key="admin" 
+                onBack={() => {
+                  localStorage.removeItem('active_role');
+                  localStorage.removeItem('active_session_code');
+                  setRole(null);
+                }} 
+                user={user!} 
+              />
             ) : (
-              <BuddyFlow key="buddy" onBack={() => setRole(null)} user={user!} />
+              <BuddyFlow 
+                key="buddy" 
+                onBack={() => {
+                  localStorage.removeItem('active_role');
+                  localStorage.removeItem('active_session_code');
+                  setRole(null);
+                }} 
+                user={user!} 
+              />
             )}
           </AnimatePresence>
         </div>
@@ -542,6 +561,43 @@ function HomeScreen({ onSelectRole }: { onSelectRole: (role: Role) => void, key?
   );
 }
 
+const verifyAdminBiometrics = async (): Promise<boolean> => {
+  if (typeof window === 'undefined' || !window.PublicKeyCredential) {
+    return window.confirm("Authorize this action with security confirmation?");
+  }
+  try {
+    const isAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    if (!isAvailable) {
+      return window.confirm("Authorize this action with security confirmation?");
+    }
+
+    const challenge = new Uint8Array(32);
+    window.crypto.getRandomValues(challenge);
+
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge,
+        rp: { name: "FocusBuddy Security" },
+        user: {
+          id: new Uint8Array([1, 2, 3, 4]),
+          name: "admin@focusbuddy",
+          displayName: "Admin User",
+        },
+        pubKeyCredParams: [{ alg: -7, type: "public-key" }], // ES256
+        authenticatorSelection: {
+          authenticatorAttachment: "platform",
+          userVerification: "required",
+        },
+        timeout: 60000,
+      },
+    });
+    return credential !== null;
+  } catch (e) {
+    console.warn("Biometric verification failed, using confirmation dialog:", e);
+    return window.confirm("Biometric verification failed/cancelled. Continue with standard confirmation?");
+  }
+};
+
 // --- Admin Flow ---
 
 const ESSENTIAL_APPS = [
@@ -549,7 +605,6 @@ const ESSENTIAL_APPS = [
   { label: "Phone", packageName: "com.android.dialer" },
   { label: "Messages", packageName: "com.google.android.apps.messaging" },
   { label: "Clock", packageName: "com.google.android.deskclock" },
-  { label: "Settings", packageName: "com.android.settings" },
   { label: "Calculator", packageName: "com.google.android.calculator" },
   { label: "Calendar", packageName: "com.google.android.calendar" },
   { label: "Camera", packageName: "com.android.camera" },
@@ -567,8 +622,39 @@ function AppListModal({ buddy, session, onClose }: { buddy: Buddy, session: Sess
     }
   }, [buddy.installedApps]);
 
+  const HIGH_RISK_PACKAGES = new Set([
+    'com.android.chrome', 'com.brave.browser', 'org.mozilla.firefox',
+    'com.microsoft.emmx', 'com.opera.browser', 'com.sec.android.app.sbrowser',
+    'com.mi.globalbrowser', 'com.android.browser',
+    'com.android.vending', 'com.sec.android.app.samsungapps',
+    'com.xiaomi.market', 'com.heytap.market',
+    'com.instagram.android', 'com.whatsapp', 'com.snapchat.android',
+    'com.discord', 'com.telegram.messenger', 'com.twitter.android',
+    'com.facebook.katana', 'com.zhiliaoapp.musically', 'com.reddit.frontpage',
+    'com.linkedin.android', 'com.pinterest',
+    'com.netflix.mediaclient', 'com.amazon.avod.thirdpartyclient',
+    'com.google.android.youtube', 'com.spotify.music',
+    'com.valvesoftware.android.steam.community', 'com.epicgames.portal',
+  ]);
+
   const toggleApp = async (packageName: string) => {
     const isWhitelisted = buddy.whitelistedApps.includes(packageName);
+    
+    if (!isWhitelisted && HIGH_RISK_PACKAGES.has(packageName)) {
+      const confirmed = window.confirm(
+        `⚠️ HIGH RISK APP WARNING\n\n` +
+        `Whitelisting "${packageName}" can easily bypass focus mode:\n` +
+        `• Browsers provide unrestricted internet access\n` +
+        `• Messaging/Social media apps contain in-app browsers\n` +
+        `• App stores allow installing third-party tools\n\n` +
+        `Are you sure you want to whitelist this app?`
+      );
+      if (!confirmed) return;
+    }
+
+    const biometricsVerified = await verifyAdminBiometrics();
+    if (!biometricsVerified) return;
+
     const newWhitelist = isWhitelisted
       ? buddy.whitelistedApps.filter(p => p !== packageName)
       : [...buddy.whitelistedApps, packageName];
@@ -805,7 +891,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
           if (timer) clearInterval(timer);
           // Auto end the session
           if (window.Android && window.Android.stopFocusSession) {
-            window.Android.stopFocusSession();
+            window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
           }
           const endedAt = new Date();
           updateDoc(doc(db, 'sessions', session.id), {
@@ -833,7 +919,13 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
   }, [session?.status, session?.startTime, session?.timerSeconds]);
 
   const createSession = async () => {
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const generateSessionCode = (): string => {
+      const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // no 0/O/1/I/L
+      const bytes = new Uint8Array(10);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes).map(b => alphabet[b % alphabet.length]).join('');
+    };
+    const code = generateSessionCode();
     const finalDuration = customDuration ? parseInt(customDuration) : duration;
     
     const sessionData: Omit<Session, 'id'> = {
@@ -864,11 +956,6 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
   const startSessionActual = async () => {
     if (!session) return;
     try {
-      // Trigger hardware blocker if this is also a Buddy device
-      if (window.Android && window.Android.startFocusSession) {
-        window.Android.startFocusSession(JSON.stringify([]));
-      }
-
       await updateDoc(doc(db, 'sessions', session.id), {
         status: 'active',
         focusActive: true,
@@ -882,10 +969,12 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
 
   const stopSession = async () => {
     if (!session) return;
+    const verified = await verifyAdminBiometrics();
+    if (!verified) return;
     try {
       // Release hardware blocker
       if (window.Android && window.Android.stopFocusSession) {
-        window.Android.stopFocusSession();
+        window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
       }
 
       const endedAt = new Date();
@@ -923,6 +1012,8 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
 
   const approveBuddy = async (buddyId: string) => {
     if (!session) return;
+    const verified = await verifyAdminBiometrics();
+    if (!verified) return;
     try {
       await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddyId), {
         status: 'approved'
@@ -962,7 +1053,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       if (session.status === 'active' || session.status === 'paused' || session.status === 'countdown') {
         try {
           if (window.Android && window.Android.stopFocusSession) {
-            window.Android.stopFocusSession();
+            window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
           }
           await updateDoc(doc(db, 'sessions', session.id), {
             status: 'ended',
@@ -1442,14 +1533,14 @@ function AboutView({ onBack }: { onBack: () => void }) {
               </div>
               <div className="flex gap-4">
                 <div className="w-8 h-8 rounded-full bg-[#707A3E]/10 text-[#707A3E] flex items-center justify-center font-black flex-shrink-0">4</div>
-                <p><span className="font-bold text-neutral-900 dark:text-white">AI Monitoring:</span> Our AI ensures it's you. If only a stranger is detected, focus mode pauses automatically to protect your session.</p>
+                <p><span className="font-bold text-neutral-900 dark:text-white">Presence Monitoring:</span> Our verification engine ensures it's you. If only a stranger is detected, focus mode pauses automatically to protect your session.</p>
               </div>
               <div className="p-4 bg-yellow-500/5 border border-yellow-500/10 rounded-2xl mt-4">
                 <div className="flex items-center gap-2 text-yellow-600 font-black text-[10px] uppercase tracking-widest mb-1">
                   <Camera className="w-3 h-3" /> Why Permissions?
                 </div>
                 <p className="text-[10px] text-neutral-500 leading-relaxed italic">
-                  To provide professional app-locking and AI face monitoring, Android treats our internal bridge as a secure connection. This is why you see "browser-style" permission prompts—granting them ensures the locking service stays active and the AI can detect if a stranger picks up your phone.
+                  To provide professional app-locking and biometric face monitoring, Android treats our internal bridge as a secure connection. This is why you see "browser-style" permission prompts—granting them ensures the locking service stays active and the verification engine can detect if a stranger picks up your phone.
                 </p>
               </div>
             </div>
@@ -1594,7 +1685,7 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       if (session.status === 'ended') {
         // Automatically cleanup and stop native side
         if (window.Android && window.Android.stopFocusSession) {
-          window.Android.stopFocusSession();
+          window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
         }
       }
       
@@ -1707,8 +1798,11 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       console.log("You cannot leave during an active focus session!");
       return;
     }
+    localStorage.removeItem('active_role');
+    localStorage.removeItem('active_session_code');
     setSession(null);
     setBuddy(null);
+    onBack();
   };
 
   const registerFace = async (descriptor: string, faceSnapshot: string) => {
@@ -1745,6 +1839,7 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
               localStorage.removeItem('active_role');
               setSession(null);
               setBuddy(null);
+              onBack();
             }}
             className="bg-[#707A3E] text-white px-12 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-[#707A3E]/30 active:scale-95 transition-all"
           >
@@ -1874,7 +1969,7 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                   </div>
                   <div className="flex-1">
                     <div className="text-xs font-bold text-green-500 uppercase tracking-tighter">Biometric Profile Linked</div>
-                    <div className="text-[9px] text-green-500/60 font-medium tracking-tight">On-device AI descriptor active</div>
+                    <div className="text-[9px] text-green-500/60 font-medium tracking-tight">On-device descriptor active</div>
                   </div>
                   <CheckCircle2 className="w-4 h-4 text-green-500" />
                 </div>
@@ -1991,6 +2086,7 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
   const [screenOn, setScreenOn] = useState(true);
   const [appIcons, setAppIcons] = useState<Record<string, string>>({});
   const engineRef = useRef<FaceSecurityEngineRef>(null);
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const checkScreen = () => {
@@ -1999,19 +2095,28 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
       }
     };
     const interval = setInterval(checkScreen, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
+    };
   }, []);
 
   useEffect(() => {
     if (window.Android) {
+      const token = localStorage.getItem('session_token') || '';
       if (isActive && !buddy.pausedByFace) {
-        window.Android.startFocusSession(JSON.stringify(buddy.whitelistedApps || []));
+        window.Android.startFocusSession(JSON.stringify(buddy.whitelistedApps || []), session.id, buddy.id, token);
       } else {
-        window.Android.stopFocusSession();
+        window.Android.stopFocusSession(token);
       }
     }
-    return () => { if (window.Android) window.Android.stopFocusSession(); };
-  }, [isActive, isPaused, isEnded, buddy.pausedByFace, buddy.whitelistedApps]);
+    return () => {
+      if (window.Android) {
+        const token = localStorage.getItem('session_token') || '';
+        window.Android.stopFocusSession(token);
+      }
+    };
+  }, [isActive, isPaused, isEnded, buddy.pausedByFace, buddy.whitelistedApps, session.id, buddy.id]);
 
   useEffect(() => {
     if (window.Android && window.Android.getAppIcon) {
@@ -2041,7 +2146,7 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
           if (timer) clearInterval(timer);
           // AUTO END SESSION FROM BUDDY SIDE (safeguard)
           if (window.Android && window.Android.stopFocusSession) {
-            window.Android.stopFocusSession();
+            window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
           }
           updateDoc(doc(db, 'sessions', session.id), {
             status: 'ended',
@@ -2070,13 +2175,25 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
     return () => clearInterval(timer);
   }, [session.status, session.startTime, session.timerSeconds, isEnded, isPaused]);
 
-  const updateVerification = async (isLocked: boolean, isPaused: boolean) => {
-    try {
-      await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), {
-        pausedByFace: isPaused,
-        lastFaceMatch: isLocked
-      });
-    } catch (e) { console.error("Sync error:", e); }
+  const updateVerification = (isLocked: boolean, isPaused: boolean, securityAlert?: string | null) => {
+    if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
+    debounceTimeoutRef.current = setTimeout(async () => {
+      try {
+        const updates: any = {
+          pausedByFace: isPaused,
+          lastFaceMatch: isLocked
+        };
+        if (securityAlert !== undefined) {
+          updates.securityAlert = securityAlert;
+        } else {
+          // Clear security alert if returning to normal verified state
+          if (isLocked && !isPaused && buddy.securityAlert === 'SUSPECTED_SPOOF') {
+            updates.securityAlert = null;
+          }
+        }
+        await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), updates);
+      } catch (e) { console.error("Sync error:", e); }
+    }, 1000);
   };
 
   const whitelistedAppInfos = [...ESSENTIAL_APPS, ...(buddy.installedApps || []).filter(app => 
@@ -2085,7 +2202,9 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
   )];
 
   const launchApp = (packageName: string) => {
-    if (window.Android && window.Android.launchApp) window.Android.launchApp(packageName);
+    if (window.Android && window.Android.launchApp) {
+      window.Android.launchApp(packageName, localStorage.getItem('session_token') || '');
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -2100,39 +2219,61 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
       animate={{ opacity: 1 }}
       className="fixed inset-0 z-[100] bg-[#FDFBF0] dark:bg-neutral-950 flex flex-col p-6 text-center overflow-hidden selection:bg-[#707A3E]/30"
     >
-      {/* Invisible Secure AI Engine */}
+      {/* Invisible Secure Verification Engine */}
       <FaceSecurityEngine 
         ref={engineRef}
         isSessionActive={isActive && !isEnded && !isPaused}
-        storedDescriptor={buddy.faceDescriptor || buddy.faceImage}
+        storedDescriptor={buddy.faceDescriptor || undefined}
         ghostMode={true}
         showHUD={false}
-        onBuddyLocked={() => updateVerification(true, false)}
+        onBuddyLocked={() => updateVerification(true, false, null)}
         onStrangerPaused={() => updateVerification(false, true)}
-        onBuddyReturned={() => updateVerification(true, false)}
+        onBuddyReturned={() => updateVerification(true, false, null)}
         onCameraBlocked={() => updateVerification(true, false)} // Anti-escape
+        onSuspectedSpoof={() => updateVerification(false, false, 'SUSPECTED_SPOOF')}
       />
       
       {/* Immersive background for Focus Mode */}
       <div className="fixed inset-0 opacity-[0.01] pointer-events-none dark:opacity-[0.03]" style={{ backgroundImage: `radial-gradient(#707A3E 1px, transparent 1px)`, backgroundSize: '40px 40px' }} />
       
-      {(!screenOn || (buddy.pausedByFace && !isEnded)) && (
+      {(!screenOn || (buddy.pausedByFace && !isEnded) || buddy.securityAlert === 'SUSPECTED_SPOOF') && (
         <div className="absolute inset-0 z-[110] bg-white/95 dark:bg-neutral-950/95 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center">
           <motion.div 
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="w-20 h-20 bg-yellow-500/20 rounded-[1.5rem] flex items-center justify-center mb-6 border border-yellow-500/30 shadow-2xl shadow-yellow-500/20"
+            className={cn(
+              "w-20 h-20 rounded-[1.5rem] flex items-center justify-center mb-6 border shadow-2xl",
+              buddy.securityAlert === 'SUSPECTED_SPOOF' 
+                ? "bg-red-500/20 border-red-500/30 shadow-red-500/20" 
+                : "bg-yellow-500/20 border-yellow-500/30 shadow-yellow-500/20"
+            )}
           >
-            <UserX className="w-10 h-10 text-yellow-500" />
+            {buddy.securityAlert === 'SUSPECTED_SPOOF' ? (
+              <AlertCircle className="w-10 h-10 text-red-500" />
+            ) : (
+              <UserX className="w-10 h-10 text-yellow-500" />
+            )}
           </motion.div>
-          <h3 className="text-2xl font-black text-neutral-900 dark:text-white mb-3 tracking-tight">Stranger Detected</h3>
+          <h3 className="text-2xl font-black text-neutral-900 dark:text-white mb-3 tracking-tight">
+            {buddy.securityAlert === 'SUSPECTED_SPOOF' ? 'Security Lock' : 'Stranger Detected'}
+          </h3>
           <p className="text-neutral-500 dark:text-neutral-400 text-sm max-w-xs leading-relaxed">
-            Focus mode is temporarily paused because a stranger was detected.
+            {buddy.securityAlert === 'SUSPECTED_SPOOF' 
+              ? 'Liveness verification failed. Active spoofing suspected.' 
+              : 'Focus mode is temporarily paused because a stranger was detected.'}
           </p>
           <div className="mt-8 flex flex-col items-center gap-3">
-            <div className="w-6 h-6 border-2 border-yellow-500/20 border-t-yellow-500 rounded-full animate-spin" />
-            <div className="text-[8px] text-yellow-500 font-black uppercase tracking-[0.4em]">
-              Waiting for Buddy
+            <div className={cn(
+              "w-6 h-6 border-2 rounded-full animate-spin",
+              buddy.securityAlert === 'SUSPECTED_SPOOF' 
+                ? "border-red-500/20 border-t-red-500" 
+                : "border-yellow-500/20 border-t-yellow-500"
+            )} />
+            <div className={cn(
+              "text-[8px] font-black uppercase tracking-[0.4em]",
+              buddy.securityAlert === 'SUSPECTED_SPOOF' ? "text-red-500" : "text-yellow-500"
+            )}>
+              {buddy.securityAlert === 'SUSPECTED_SPOOF' ? 'Performing Liveness Challenge' : 'Waiting for Buddy'}
             </div>
           </div>
         </div>

@@ -2,31 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: sessions
-    // Fields:
-    //   - focusActive: bool (required)
-    //   - adminDeviceId: string (required, immutable)
-    //   - timestamp: number (required)
-    //   - timerSeconds: number (required)
-    //   - status: string (required, enum: lobby, active, paused, ended)
-    //
-    // Collection: sessions/{sessionId}/buddies
-    // Fields:
-    //   - name: string (required)
-    //   - deviceId: string (required, immutable)
-    //   - faceImage: string (optional)
-    //   - status: string (required, enum: pending, approved, rejected)
-    //   - whitelistedApps: list (optional)
-    //   - lastFaceMatch: bool (optional)
-    //   - requestStop: bool (optional)
-    //   - isOnline: bool (optional)
-    //
-    // ===============================================================
-
     // Helper Functions
     function isAuthenticated() {
       return request.auth != null;
@@ -52,7 +27,8 @@ service cloud.firestore {
              data.timerSeconds is number &&
              data.status in ['lobby', 'countdown', 'active', 'paused', 'ended'] &&
              (!('startTime' in data) || data.startTime is timestamp || data.startTime == null) &&
-             (!('endedAt' in data) || data.endedAt is timestamp || data.endedAt == null);
+             (!('endedAt' in data) || data.endedAt is timestamp || data.endedAt == null) &&
+             (!('buddyIds' in data) || data.buddyIds is list);
     }
 
     function isValidBuddy(data) {
@@ -62,42 +38,99 @@ service cloud.firestore {
              (!('whitelistedApps' in data) || data.whitelistedApps is list) &&
              (!('installedApps' in data) || data.installedApps is list) &&
              (!('requestStop' in data) || data.requestStop is bool) &&
-             (!('requestPause' in data) || data.requestPause is bool);
+             (!('requestPause' in data) || data.requestPause is bool) &&
+             (!('isOnline' in data) || data.isOnline is bool) &&
+             (!('faceDescriptor' in data) || data.faceDescriptor is string || data.faceDescriptor == null) &&
+             (!('faceImage' in data) || data.faceImage is string || data.faceImage == null) &&
+             (!('pausedByFace' in data) || data.pausedByFace is bool) &&
+             (!('lastFaceMatch' in data) || data.lastFaceMatch is bool) &&
+             (!('securityThreats' in data) || data.securityThreats is map) &&
+             (!('securityAlert' in data) || data.securityAlert is string);
     }
 
     match /sessions/{sessionId} {
-      allow read: if isAuthenticated();
+      // Only admin and buddies can read session details (prevents enumeration)
+      allow read: if isAdminOfSession(sessionId) || 
+                    (isAuthenticated() && request.auth.uid in resource.data.buddyIds);
       
       allow create: if isAuthenticated() && 
                       isValidSession(request.resource.data) &&
-                      request.resource.data.adminDeviceId == request.auth.uid;
+                      request.resource.data.adminDeviceId == request.auth.uid &&
+                      request.resource.data.status == 'lobby' &&
+                      request.resource.data.focusActive == false;
                       
-      allow update: if isAuthenticated() && 
-                      resource.data.adminDeviceId == request.auth.uid &&
+      allow update: if isAuthenticated() &&
                       isValidSession(request.resource.data) &&
-                      request.resource.data.adminDeviceId == resource.data.adminDeviceId;
+                      request.resource.data.adminDeviceId == resource.data.adminDeviceId &&
+                      (
+                        // Admin: full update authority
+                        resource.data.adminDeviceId == request.auth.uid ||
+                        // Buddy joining: only adds self to buddyIds (no removals, no others)
+                        (
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['buddyIds']) &&
+                          request.auth.uid in request.resource.data.buddyIds &&
+                          request.resource.data.buddyIds.hasAll(resource.data.buddyIds) &&
+                          request.resource.data.buddyIds.size() <= resource.data.buddyIds.size() + 1
+                        ) ||
+                        // Buddy auto-end: timer expired, can only set status to ended
+                        (
+                          request.auth.uid in resource.data.buddyIds &&
+                          resource.data.status in ['active', 'paused'] &&
+                          request.resource.data.status == 'ended' &&
+                          request.resource.data.focusActive == false
+                        )
+                      );
+
+      // Sessions can NEVER be deleted (use status='ended' instead)
+      allow delete: if false;
 
       match /buddies/{buddyId} {
-        allow read: if isAuthenticated();
+        // Only admin and the buddy themselves can read buddy docs
+        allow read: if isAdminOfSession(sessionId) || buddyId == request.auth.uid;
         
         allow create: if isAuthenticated() && 
                         buddyId == request.auth.uid &&
                         isValidBuddy(request.resource.data) &&
-                        request.resource.data.deviceId == request.auth.uid;
+                        request.resource.data.deviceId == request.auth.uid &&
+                        request.resource.data.status == 'pending';  // must start as pending
                         
-        allow update: if isAuthenticated() && 
-                        (buddyId == request.auth.uid || isAdminOfSession(sessionId)) &&
+        allow update: if isAuthenticated() &&
                         isValidBuddy(request.resource.data) &&
-                        request.resource.data.deviceId == resource.data.deviceId;
+                        request.resource.data.deviceId == resource.data.deviceId &&
+                        (
+                          // Admin: full control
+                          isAdminOfSession(sessionId) ||
+                          // Buddy: ONLY allowed fields depending on session state
+                          (
+                            buddyId == request.auth.uid &&
+                            // Whitelist and status can NEVER be changed by the buddy
+                            request.resource.data.whitelistedApps == resource.data.whitelistedApps &&
+                            request.resource.data.status == resource.data.status &&
+                            request.resource.data.name == resource.data.name &&
+                            request.resource.data.installedApps == resource.data.installedApps &&
+                            (
+                              // If session is in lobby, buddy can register face
+                              (getSession(sessionId).status == 'lobby' &&
+                               request.resource.data.diff(resource.data).affectedKeys()
+                                 .hasOnly(['faceDescriptor', 'faceImage', 'isOnline'])) ||
+                              // If session is active/paused/countdown/ended, buddy can update verification, request flags, and security reports
+                              (getSession(sessionId).status != 'lobby' &&
+                               request.resource.data.faceDescriptor == resource.data.faceDescriptor &&
+                               request.resource.data.faceImage == resource.data.faceImage &&
+                               request.resource.data.diff(resource.data).affectedKeys()
+                                 .hasOnly(['pausedByFace', 'lastFaceMatch', 'requestStop', 'requestPause', 'isOnline', 'securityThreats', 'securityAlert']))
+                            )
+                          )
+                        );
                         
-        allow delete: if isAuthenticated() && 
-                        (buddyId == request.auth.uid || isAdminOfSession(sessionId));
+        // Buddy CANNOT self-delete. Only admin can delete buddy docs.
+        allow delete: if isAdminOfSession(sessionId);
       }
     }
     
     // User profile for bootstrapping
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      allow read: if isOwner(userId);
       allow write: if isOwner(userId);
     }
 

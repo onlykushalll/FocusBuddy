@@ -27,7 +27,7 @@ const STEPS: OnboardingStep[] = [
   },
   {
     title: "Face Verification",
-    description: "Our AI ensures it's you. If only a stranger is detected, focus mode pauses automatically. If you're alone or the camera is blocked, it stays locked.",
+    description: "Our verification engine ensures it's you. If only a stranger is detected, focus mode pauses automatically. If you're alone or the camera is blocked, it stays locked.",
     icon: <Smartphone className="w-12 h-12" />,
     color: "#0284C7"
   }

@@ -43,6 +43,7 @@ export type SessionState =
   | 'LOCKED'         // buddy confirmed → focus mode active
   | 'PAUSED'         // stranger only   → phone access restored
   | 'RESERVE'        // screen off      → low-power polling
+  | 'SUSPECTED_SPOOF'// active spoofing suspected
   | 'IDLE';          // session inactive
 
 export type LivenessChallenge = 'BLINK' | 'NOD' | null;
@@ -84,6 +85,7 @@ export interface FaceSecurityEngineProps {
   onLivenessChallenge?: (type: LivenessChallenge) => void;
   onRegistrationComplete?: (descriptorJson: string, faceSnapshot: string) => void;
   onEngineError?: (err: string) => void;
+  onSuspectedSpoof?: () => void;
 }
 
 // ─── Landmark indices (MediaPipe FaceMesh 478-point model) ───────────────────
@@ -258,6 +260,19 @@ class LivenessEngine {
   private histStabilityHistory: number[] = [];
   private irisMoveHistory: { x: number; y: number }[] = [];
 
+  // Replay detection state
+  private frameHashes: number[] = [];
+  private duplicateFrameCount = 0;
+
+  // LBP texture state
+  private lbpHistory: number[] = [];
+
+  // Boundary detection state
+  private boundaryHistory: number[] = [];
+
+  // Reusable canvas for ROI extraction
+  private _roiCanvas: HTMLCanvasElement | null = null;
+
   // Overall
   private challengeActive: LivenessChallenge = null;
   private score = 1.0;
@@ -274,6 +289,9 @@ class LivenessEngine {
     moireFrequency: 1.0,
     histogramConsistency: 1.0,
     attentionGaze: 1.0,
+    replayDetection: 1.0,
+    lbpTexture: 1.0,
+    boundaryDetection: 1.0,
   };
 
   reset(): void {
@@ -294,6 +312,10 @@ class LivenessEngine {
     this.moireHistory = [];
     this.histStabilityHistory = [];
     this.irisMoveHistory = [];
+    this.frameHashes = [];
+    this.duplicateFrameCount = 0;
+    this.lbpHistory = [];
+    this.boundaryHistory = [];
 
     this.layersScore = {
       temporalBlink: 1.0,
@@ -349,6 +371,15 @@ class LivenessEngine {
 
     // 7. Histogram Stability Consistency check
     this._updateHistogramConsistency(imgData);
+
+    // 8. Replay detection (dHash frame dedup)
+    this._updateReplayDetection(imgData);
+
+    // 9. LBP Texture analysis
+    this._updateLBPTexture(imgData);
+
+    // 10. Boundary/frame detection
+    this._updateBoundaryDetection(imgData);
   }
 
   private _extractSkinROI(video: HTMLVideoElement, kps: Kps, width = 48, height = 48): ImageData | null {
@@ -356,7 +387,8 @@ class LivenessEngine {
     const nose = kps[LM.NOSE_TIP];
     if (!forehead || !nose) return null;
 
-    const canvas = document.createElement('canvas');
+    if (!this._roiCanvas) this._roiCanvas = document.createElement('canvas');
+    const canvas = this._roiCanvas;
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -407,7 +439,7 @@ class LivenessEngine {
       const std = Math.sqrt(variance);
 
       // On 2D screens or photos, estimated depths are either perfectly flat or 100% static
-      if (mean < 0.04 || std < 0.001) {
+      if (mean < 0.04 || std < 0.003) {
         this.layersScore.depth3DGeometry = 0.20; // flat spoof
       } else if (mean < 0.07) {
         this.layersScore.depth3DGeometry = 0.65; // suspicious low depth depth profile
@@ -484,7 +516,7 @@ class LivenessEngine {
       } else if (std < 0.06) {
         this.layersScore.rppgBloodFlow = 0.50; // highly suspicious flat feed
       } else {
-        // Human heartbeat (48–180 BPM) generates periodic oscillations. Count zero-crossings
+        // Pulse-like oscillations generate periodic zero-crossings in the green channel
         let crossings = 0;
         for (let i = 1; i < this.greenHistory.length; i++) {
           const prev = this.greenHistory[i - 1] - mean;
@@ -626,13 +658,189 @@ class LivenessEngine {
       }
       
       // If color histogram remains 100% frozen/identical across frames, it is a frozen mock loop or printout
-      if (diff < 0.0001) {
-        this.layersScore.histogramConsistency = Math.max(0.20, (this.layersScore.histogramConsistency ?? 1.0) - 0.15);
+      if (diff < 0.001) {
+        this.layersScore.histogramConsistency = Math.max(0.20, (this.layersScore.histogramConsistency ?? 1.0) - 0.08);
       } else {
         this.layersScore.histogramConsistency = Math.min(1.0, (this.layersScore.histogramConsistency ?? 1.0) + 0.10);
       }
     }
     this.histStabilityHistory = normBins;
+  }
+
+  // ── Passive Layer: Replay Detection (dHash frame dedup) ───────────────────
+
+  private _updateReplayDetection(imgData: ImageData): void {
+    const hash = this._computeDHash(imgData);
+
+    let matches = 0;
+    for (const prev of this.frameHashes) {
+      if (this._hammingDistance(hash, prev) < 3) matches++;
+    }
+
+    this.frameHashes.push(hash);
+    if (this.frameHashes.length > 300) this.frameHashes.shift();
+
+    if (matches === 0) {
+      this.duplicateFrameCount = Math.max(0, this.duplicateFrameCount - 1);
+      this.layersScore.replayDetection = 1.0;
+    } else {
+      this.duplicateFrameCount++;
+      if (this.duplicateFrameCount <= 2) {
+        this.layersScore.replayDetection = 0.85;
+      } else if (this.duplicateFrameCount <= 5) {
+        this.layersScore.replayDetection = 0.50;
+      } else {
+        this.layersScore.replayDetection = 0.10;
+      }
+    }
+  }
+
+  private _computeDHash(imgData: ImageData): number {
+    const pixels = imgData.data;
+    const w = imgData.width;
+    const h = imgData.height;
+    const stepX = Math.max(1, Math.floor(w / 9));
+    const stepY = Math.max(1, Math.floor(h / 8));
+    const grays: number[] = [];
+
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 9; col++) {
+        const px = Math.min(col * stepX, w - 1);
+        const py = Math.min(row * stepY, h - 1);
+        const idx = (py * w + px) * 4;
+        grays.push(0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2]);
+      }
+    }
+
+    let hash = 0;
+    let bit = 0;
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        if (grays[row * 9 + col + 1] > grays[row * 9 + col]) {
+          hash |= (1 << (bit & 31));
+        }
+        bit++;
+      }
+    }
+    return hash;
+  }
+
+  private _hammingDistance(a: number, b: number): number {
+    let xor = a ^ b;
+    let count = 0;
+    while (xor) { count += xor & 1; xor >>>= 1; }
+    return count;
+  }
+
+  // ── Passive Layer: LBP Texture Analysis ───────────────────────────────────
+
+  private _updateLBPTexture(imgData: ImageData): void {
+    const pixels = imgData.data;
+    const w = imgData.width;
+    const h = imgData.height;
+
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      gray[i] = Math.round(0.299 * pixels[i * 4] + 0.587 * pixels[i * 4 + 1] + 0.114 * pixels[i * 4 + 2]);
+    }
+
+    const bins = new Array(256).fill(0);
+    let totalPixels = 0;
+    const offsets = [[-1,-1],[-1,0],[-1,1],[0,1],[1,1],[1,0],[1,-1],[0,-1]];
+
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const center = gray[y * w + x];
+        let lbp = 0;
+        for (let bit = 0; bit < 8; bit++) {
+          const ny = y + offsets[bit][0];
+          const nx = x + offsets[bit][1];
+          if (gray[ny * w + nx] >= center) lbp |= (1 << bit);
+        }
+        bins[lbp]++;
+        totalPixels++;
+      }
+    }
+
+    if (totalPixels === 0) return;
+
+    let entropy = 0;
+    for (let i = 0; i < 256; i++) {
+      const p = bins[i] / totalPixels;
+      if (p > 0) entropy -= p * Math.log2(p);
+    }
+
+    this.lbpHistory.push(entropy);
+    if (this.lbpHistory.length > 30) this.lbpHistory.shift();
+
+    if (this.lbpHistory.length >= 10) {
+      const avgEntropy = this.lbpHistory.reduce((a, b) => a + b, 0) / this.lbpHistory.length;
+      if (avgEntropy < 3.5) {
+        this.layersScore.lbpTexture = 0.20;
+      } else if (avgEntropy < 5.0) {
+        this.layersScore.lbpTexture = 0.65;
+      } else {
+        this.layersScore.lbpTexture = 1.0;
+      }
+    }
+  }
+
+  // ── Passive Layer: Boundary/Frame Detection ───────────────────────────────
+
+  private _updateBoundaryDetection(imgData: ImageData): void {
+    const pixels = imgData.data;
+    const w = imgData.width;
+    const h = imgData.height;
+    const margin = Math.max(2, Math.floor(Math.min(w, h) * 0.12));
+
+    let strongEdges = 0;
+    const gray = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      gray[i] = Math.round(0.299 * pixels[i * 4] + 0.587 * pixels[i * 4 + 1] + 0.114 * pixels[i * 4 + 2]);
+    }
+
+    const checkBorderEdges = (isRow: boolean, pos: number, start: number, end: number): number => {
+      let edgeCount = 0;
+      for (let i = start + 1; i < end; i++) {
+        const idx1 = isRow ? pos * w + i : i * w + pos;
+        const idx2 = isRow ? pos * w + (i - 1) : (i - 1) * w + pos;
+        if (Math.abs(gray[idx1] - gray[idx2]) > 30) edgeCount++;
+      }
+      return edgeCount;
+    };
+
+    const minLen = Math.floor(Math.min(w, h) * 0.3);
+    let borderSides = 0;
+
+    for (let y = 0; y < margin; y++) {
+      if (checkBorderEdges(true, y, 0, w) < 3 && w > minLen) borderSides |= 1;
+    }
+    for (let y = h - margin; y < h; y++) {
+      if (checkBorderEdges(true, y, 0, w) < 3 && w > minLen) borderSides |= 2;
+    }
+    for (let x = 0; x < margin; x++) {
+      if (checkBorderEdges(false, x, 0, h) < 3 && h > minLen) borderSides |= 4;
+    }
+    for (let x = w - margin; x < w; x++) {
+      if (checkBorderEdges(false, x, 0, h) < 3 && h > minLen) borderSides |= 8;
+    }
+
+    const sideCount = ((borderSides & 1) ? 1 : 0) + ((borderSides & 2) ? 1 : 0) +
+                      ((borderSides & 4) ? 1 : 0) + ((borderSides & 8) ? 1 : 0);
+
+    this.boundaryHistory.push(sideCount);
+    if (this.boundaryHistory.length > 20) this.boundaryHistory.shift();
+
+    if (this.boundaryHistory.length >= 10) {
+      const avgSides = this.boundaryHistory.reduce((a, b) => a + b, 0) / this.boundaryHistory.length;
+      if (avgSides >= 3.5) {
+        this.layersScore.boundaryDetection = 0.25;
+      } else if (avgSides >= 2.5) {
+        this.layersScore.boundaryDetection = 0.55;
+      } else {
+        this.layersScore.boundaryDetection = 1.0;
+      }
+    }
   }
 
   // ── Blink ───────────────────────────────────────────────────────────────────
@@ -738,13 +946,16 @@ class LivenessEngine {
     if (this.challengeActive !== null) s -= 0.15;
 
     // Sub-layer penalty multipliers
-    s -= (1.0 - this.layersScore.depth3DGeometry) * 0.15;
-    s -= (1.0 - this.layersScore.attentionGaze) * 0.10;
-    s -= (1.0 - this.layersScore.rppgBloodFlow) * 0.20;
-    s -= (1.0 - this.layersScore.specularReflection) * 0.12;
-    s -= (1.0 - this.layersScore.colorSpaceSkin) * 0.18;
-    s -= (1.0 - this.layersScore.moireFrequency) * 0.15;
-    s -= (1.0 - this.layersScore.histogramConsistency) * 0.10;
+    s -= (1.0 - this.layersScore.depth3DGeometry) * 0.12;
+    s -= (1.0 - this.layersScore.attentionGaze) * 0.08;
+    s -= (1.0 - this.layersScore.rppgBloodFlow) * 0.15;
+    s -= (1.0 - this.layersScore.specularReflection) * 0.10;
+    s -= (1.0 - this.layersScore.colorSpaceSkin) * 0.12;
+    s -= (1.0 - this.layersScore.moireFrequency) * 0.10;
+    s -= (1.0 - this.layersScore.histogramConsistency) * 0.08;
+    s -= (1.0 - this.layersScore.replayDetection) * 0.20;
+    s -= (1.0 - this.layersScore.lbpTexture) * 0.15;
+    s -= (1.0 - this.layersScore.boundaryDetection) * 0.10;
 
     this.score = Math.max(0.01, Math.min(1.0, s));
   }
@@ -828,6 +1039,7 @@ export function useFaceSecurityEngine(
     onBuddyLocked, onStrangerPaused, onBuddyReturned,
     onStrangerDetected, onMultipleFaces, onCameraBlocked,
     onLivenessChallenge, onRegistrationComplete, onEngineError,
+    onSuspectedSpoof,
   } = props;
 
   const [state, setState] = useState<HookState>({
@@ -865,6 +1077,7 @@ export function useFaceSecurityEngine(
   const currentFpsRef     = useRef(FPS_LOW);
   const darkFrameCount    = useRef(0);
   const buddyMissFrames   = useRef(0);
+  const spoofFrameCount   = useRef(0);
   const prevStateRef      = useRef<SessionState>('IDLE');
   const registrationBuf   = useRef<number[][]>([]);
   const isRegistering     = useRef(false);
@@ -1199,6 +1412,26 @@ export function useFaceSecurityEngine(
       livenessScore  = liveness.score;
       challenge      = liveness.challenge;
 
+      if (livenessScore < 0.60) {
+        spoofFrameCount.current++;
+        if (spoofFrameCount.current >= 5) {
+          _setSessionState('SUSPECTED_SPOOF');
+          onSuspectedSpoof?.();
+          if (!challenge) {
+            // Trigger active liveness challenge
+            challenge = Math.random() < 0.5 ? 'BLINK' : 'NOD';
+          }
+        }
+      } else {
+        if (livenessScore >= 0.80) {
+          spoofFrameCount.current = 0;
+          if (sessionStateRef.current === 'SUSPECTED_SPOOF') {
+            _setSessionState('LOCKED');
+            onBuddyLocked?.();
+          }
+        }
+      }
+
       if (challenge && challenge !== lastChallengeRef.current) {
         lastChallengeRef.current = challenge;
         onLivenessChallenge?.(challenge);
@@ -1239,6 +1472,7 @@ export function useFaceSecurityEngine(
     isSessionActive, videoRef,
     onBuddyLocked, onStrangerPaused, onBuddyReturned,
     onStrangerDetected, onMultipleFaces, onCameraBlocked, onLivenessChallenge,
+    onRegistrationComplete, onSuspectedSpoof,
   ]);
 
   // ── Identity check ────────────────────────────────────────────────────────
@@ -1451,6 +1685,7 @@ const SecurityOverlay: React.FC<OverlayProps> = ({
     REGISTERING: '#00d4ff',
     RESERVE:     '#666688',
     INITIALIZING:'#888899',
+    SUSPECTED_SPOOF: '#ff3b30',
     IDLE:        '#444455',
   };
 
@@ -1460,6 +1695,7 @@ const SecurityOverlay: React.FC<OverlayProps> = ({
     REGISTERING: 'SCANNING',
     RESERVE:     'RESERVE',
     INITIALIZING:'INITIALIZING',
+    SUSPECTED_SPOOF: 'SPOOF DETECTED',
     IDLE:        'IDLE',
   };
 
