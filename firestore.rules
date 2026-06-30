@@ -28,7 +28,11 @@ service cloud.firestore {
              data.status in ['lobby', 'countdown', 'active', 'paused', 'ended'] &&
              (!('startTime' in data) || data.startTime is timestamp || data.startTime == null) &&
              (!('endedAt' in data) || data.endedAt is timestamp || data.endedAt == null) &&
-             (!('buddyIds' in data) || data.buddyIds is list);
+             (!('buddyIds' in data) || data.buddyIds is list) &&
+             (!('pausedAt' in data) || data.pausedAt is timestamp || data.pausedAt == null) &&
+             (!('accumulatedPausedSeconds' in data) || data.accumulatedPausedSeconds is number) &&
+             (!('countdownEndsAt' in data) || data.countdownEndsAt is number || data.countdownEndsAt is timestamp || data.countdownEndsAt == null) &&
+             (!('lastActive' in data) || data.lastActive is timestamp || data.lastActive == null);
     }
 
     function isValidBuddy(data) {

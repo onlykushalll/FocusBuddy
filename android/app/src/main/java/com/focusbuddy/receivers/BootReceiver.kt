@@ -36,7 +36,10 @@ class BootReceiver : BroadcastReceiver() {
         if (GlobalState.isSessionActive) {
             Log.i("FocusBuddy/Boot", "Session was active — restarting FaceAnalyzerService.")
             context.startForegroundService(
-                Intent(context, FaceAnalyzerService::class.java)
+                Intent(context, FaceAnalyzerService::class.java).apply {
+                    putExtra("sessionId", GlobalState.sessionId)
+                    putExtra("buddyId", GlobalState.buddyId)
+                }
             )
         }
     }

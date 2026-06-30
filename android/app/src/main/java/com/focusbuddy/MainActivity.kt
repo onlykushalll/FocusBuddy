@@ -303,6 +303,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun getSessionToken(): String {
+            return GlobalState.getSessionToken()
+        }
+
+        @JavascriptInterface
+        fun updateWhitelist(whitelistJson: String, sessionToken: String) {
+            if (!GlobalState.validateSessionToken(sessionToken)) {
+                Log.w("FocusBuddy/Bridge", "updateWhitelist rejected: invalid token")
+                return
+            }
+            try {
+                val arr = org.json.JSONArray(whitelistJson)
+                val list = List(arr.length()) { i -> arr.getString(i) }
+                    .filter { it.isNotBlank() }
+                GlobalState.whitelistedApps = list
+            } catch (e: Exception) {
+                Log.e("FocusBuddy", "Error updating whitelist", e)
+            }
+        }
+
+        @JavascriptInterface
         fun isScreenOn(): Boolean {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             return pm.isInteractive

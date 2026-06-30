@@ -67,6 +67,8 @@ object GlobalState {
     @Volatile
     private var _sessionToken: String = ""
 
+    fun getSessionToken(): String = _sessionToken
+
     fun setSessionToken(token: String) {
         _sessionToken = token
         persistAsync()

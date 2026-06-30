@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityEvent
 import com.focusbuddy.GlobalState
 import com.focusbuddy.MainActivity
 import com.focusbuddy.managers.WhitelistManager
+import android.content.pm.PackageManager
 
 /**
  * FocusLockService — Maximum-strength AccessibilityService kiosk enforcement.
@@ -57,6 +58,13 @@ class AppBlockAccessibilityService : AccessibilityService() {
     @Volatile private var blockedPackage = ""
     @Volatile private var blockedSinceMs = 0L
     @Volatile private var persistenceActive = false
+
+    private val launcherGraceRunnable = Runnable {
+        if (GlobalState.isSessionActive) {
+            Log.i(TAG, "Launcher grace period expired — executing pullback to Focus Mode")
+            firePullback()
+        }
+    }
 
     private val persistenceRunnable = object : Runnable {
         override fun run() {
@@ -134,17 +142,42 @@ class AppBlockAccessibilityService : AccessibilityService() {
     }
 
     private fun evaluatePackage(pkg: String) {
-        if (!GlobalState.isSessionActive) return
+        if (!GlobalState.isSessionActive) {
+            bgHandler.removeCallbacks(launcherGraceRunnable)
+            return
+        }
         if (HARD_BLOCKED_PACKAGES.contains(pkg)) {
+            bgHandler.removeCallbacks(launcherGraceRunnable)
             onBlockedAppDetected(pkg)
-        } else if (pkg == packageName || ALWAYS_ALLOWED_SYSTEM.contains(pkg) || WhitelistManager.isAllowed(pkg)) {
+        } else if (pkg == packageName || WhitelistManager.isAllowed(pkg)) {
+            bgHandler.removeCallbacks(launcherGraceRunnable)
             resetPersistenceState()
+        } else if (ALWAYS_ALLOWED_SYSTEM.contains(pkg)) {
+            if (isLauncher(pkg)) {
+                // User is on home launcher. Allow 2.5s grace period to tap a whitelisted app, otherwise pull back.
+                bgHandler.removeCallbacks(launcherGraceRunnable)
+                bgHandler.postDelayed(launcherGraceRunnable, 2500L)
+            } else {
+                bgHandler.removeCallbacks(launcherGraceRunnable)
+                resetPersistenceState()
+            }
         } else {
+            bgHandler.removeCallbacks(launcherGraceRunnable)
             onBlockedAppDetected(pkg)
         }
     }
 
+    private fun isLauncher(pkg: String): Boolean {
+        val intent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+        }
+        val resolveInfo = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        val defaultLauncher = resolveInfo?.activityInfo?.packageName
+        return pkg == defaultLauncher || pkg.contains("launcher") || pkg.contains("home")
+    }
+
     private fun onBlockedAppDetected(pkg: String) {
+        bgHandler.removeCallbacks(launcherGraceRunnable)
         val now = System.currentTimeMillis()
         if (now - GlobalState.lastPullbackTime >= INSTANT_DEBOUNCE_MS) {
             GlobalState.lastPullbackTime = now
@@ -179,6 +212,7 @@ class AppBlockAccessibilityService : AccessibilityService() {
 
     private fun resetPersistenceState() {
         stopPersistence()
+        bgHandler.removeCallbacks(launcherGraceRunnable)
         blockedPackage = ""
         blockedSinceMs = 0L
     }

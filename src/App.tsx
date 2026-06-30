@@ -68,6 +68,8 @@ declare global {
       generateSessionToken: () => string;
       startFocusSession: (whitelistJson: string, sessionId: string, buddyId: string, sessionToken: string) => void;
       stopFocusSession: (sessionToken: string) => void;
+      updateWhitelist: (whitelistJson: string, sessionToken: string) => void;
+      getSessionToken: () => string;
       getInstalledApps: () => string; // Returns JSON string of AppInfo[]
       getAppIcon: (packageName: string) => string; // Returns Base64 string
       launchApp: (packageName: string, sessionToken: string) => void;
@@ -75,6 +77,15 @@ declare global {
     };
   }
 }
+
+const getSessionToken = (): string => {
+  let token = localStorage.getItem('session_token') || '';
+  if (!token && window.Android?.getSessionToken) {
+    token = window.Android.getSessionToken();
+    if (token) localStorage.setItem('session_token', token);
+  }
+  return token;
+};
 
 // --- Error Handling ---
 
@@ -777,12 +788,16 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
         const q = query(
           collection(db, 'sessions'), 
           where('adminDeviceId', '==', user.uid),
-          where('status', 'in', ['lobby', 'active', 'paused', 'countdown']),
-          limit(1)
+          where('status', 'in', ['lobby', 'active', 'paused', 'countdown'])
         );
         const querySnap = await getDocs(q);
         if (!querySnap.empty) {
-          const s = querySnap.docs[0];
+          const docs = [...querySnap.docs].sort((a, b) => {
+            const tA = a.data().timestamp?.toDate?.()?.getTime() || 0;
+            const tB = b.data().timestamp?.toDate?.()?.getTime() || 0;
+            return tB - tA; // most recent first
+          });
+          const s = docs[0];
           const data = s.data();
           
           // Check if session is actually stale (e.g., status is active but time is long gone)
@@ -797,6 +812,23 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
     };
     checkActiveSession();
   }, [user.uid]);
+
+  useEffect(() => {
+    if (!session || !session.id || isEnded) return;
+    
+    // Heartbeat: update lastActive every 20 seconds
+    const interval = setInterval(async () => {
+      try {
+        await updateDoc(doc(db, 'sessions', session.id), {
+          lastActive: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Heartbeat error:", err);
+      }
+    }, 20000);
+
+    return () => clearInterval(interval);
+  }, [session?.id, session?.status, isEnded]);
 
   useEffect(() => {
     const checkStatus = () => {
@@ -880,18 +912,22 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (session?.status === 'active' && session.startTime) {
+    if ((session?.status === 'active' || session?.status === 'paused') && session.startTime) {
       const start = session.startTime.toDate ? session.startTime.toDate().getTime() : session.startTime;
       const checkAndSetTime = () => {
-        const now = Date.now();
-        const diff = Math.floor((now - start) / 1000);
-        const remaining = Math.max(0, session.timerSeconds - diff);
+        const now = session.status === 'paused' && session.pausedAt 
+          ? (session.pausedAt.toDate ? session.pausedAt.toDate().getTime() : session.pausedAt)
+          : Date.now();
+        const elapsed = Math.floor((now - start) / 1000);
+        const pausedSeconds = session.accumulatedPausedSeconds || 0;
+        const remaining = Math.max(0, session.timerSeconds - elapsed + pausedSeconds);
         setSessionTime(remaining);
+        
         if (remaining <= 0) {
           if (timer) clearInterval(timer);
           // Auto end the session
           if (window.Android && window.Android.stopFocusSession) {
-            window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
+            window.Android.stopFocusSession(getSessionToken());
           }
           const endedAt = new Date();
           updateDoc(doc(db, 'sessions', session.id), {
@@ -911,12 +947,12 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       };
 
       const ended = checkAndSetTime();
-      if (!ended) {
+      if (!ended && session.status === 'active') {
         timer = setInterval(checkAndSetTime, 1000);
       }
     }
     return () => clearInterval(timer);
-  }, [session?.status, session?.startTime, session?.timerSeconds]);
+  }, [session?.status, session?.startTime, session?.timerSeconds, session?.pausedAt, session?.accumulatedPausedSeconds]);
 
   const createSession = async () => {
     const generateSessionCode = (): string => {
@@ -949,8 +985,12 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
 
   const startSession = () => {
     if (!session) return;
+    const countdownEndsAt = Date.now() + 10000;
     setCountdown(10);
-    updateDoc(doc(db, 'sessions', session.id), { status: 'countdown' });
+    updateDoc(doc(db, 'sessions', session.id), { 
+      status: 'countdown',
+      countdownEndsAt: countdownEndsAt
+    });
   };
 
   const startSessionActual = async () => {
@@ -974,7 +1014,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
     try {
       // Release hardware blocker
       if (window.Android && window.Android.stopFocusSession) {
-        window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
+        window.Android.stopFocusSession(getSessionToken());
       }
 
       const endedAt = new Date();
@@ -1216,9 +1256,24 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
               
               <div className="flex flex-wrap justify-center gap-2 w-full">
                 {countdown !== null ? (
-                  <div className="bg-[#707A3E]/10 text-[#707A3E] px-6 py-3 rounded-2xl font-bold flex items-center gap-3 border border-[#707A3E]/20 w-full justify-center">
-                    <Clock className="w-4 h-4 animate-spin" />
-                    Starting in {countdown}s
+                  <div className="flex flex-col gap-2 w-full">
+                    <div className="bg-[#707A3E]/10 text-[#707A3E] px-6 py-3 rounded-2xl font-bold flex items-center gap-3 border border-[#707A3E]/20 w-full justify-center">
+                      <Clock className="w-4 h-4 animate-spin" />
+                      Starting in {countdown}s
+                    </div>
+                    <motion.button
+                      whileTap={{ scale: 0.95 }}
+                      onClick={async () => {
+                        setCountdown(null);
+                        await updateDoc(doc(db, 'sessions', session.id), { 
+                          status: 'lobby',
+                          countdownEndsAt: null 
+                        });
+                      }}
+                      className="w-full flex items-center justify-center gap-2 bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 py-3 rounded-xl font-bold uppercase tracking-widest text-[9px] transition-all"
+                    >
+                      Cancel Countdown
+                    </motion.button>
                   </div>
                 ) : (
                   <>
@@ -1242,7 +1297,11 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                       {session.status === 'active' && (
                         <motion.button 
                           whileTap={{ scale: 0.95 }}
-                          onClick={() => updateDoc(doc(db, 'sessions', session.id), { status: 'paused', focusActive: false })}
+                          onClick={() => updateDoc(doc(db, 'sessions', session.id), { 
+                            status: 'paused', 
+                            focusActive: false,
+                            pausedAt: serverTimestamp()
+                          })}
                           className="flex-1 flex items-center justify-center gap-2 bg-yellow-500 hover:bg-yellow-600 text-white py-3.5 rounded-2xl font-bold transition-all text-xs shadow-lg shadow-yellow-500/20"
                         >
                           <Pause className="w-4 h-4" /> Pause
@@ -1251,7 +1310,25 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                       {session.status === 'paused' && (
                         <motion.button 
                           whileTap={{ scale: 0.95 }}
-                          onClick={() => updateDoc(doc(db, 'sessions', session.id), { status: 'active', focusActive: true })}
+                          onClick={async () => {
+                            try {
+                              const sessionSnap = await getDoc(doc(db, 'sessions', session.id));
+                              const data = sessionSnap.data();
+                              if (data) {
+                                const pausedAt = data.pausedAt?.toDate?.()?.getTime() || new Date(data.pausedAt).getTime();
+                                const pausedDuration = Math.floor((Date.now() - pausedAt) / 1000);
+                                const newAccumulated = (data.accumulatedPausedSeconds || 0) + pausedDuration;
+                                await updateDoc(doc(db, 'sessions', session.id), {
+                                  status: 'active',
+                                  focusActive: true,
+                                  pausedAt: null,
+                                  accumulatedPausedSeconds: newAccumulated
+                                });
+                              }
+                            } catch (err) {
+                              console.error("Resume failed:", err);
+                            }
+                          }}
                           className="flex-1 flex items-center justify-center gap-2 bg-[#707A3E] hover:bg-[#555D2F] text-white py-3.5 rounded-2xl font-bold transition-all text-xs shadow-lg shadow-[#707A3E]/20"
                         >
                           <Play className="w-4 h-4" /> Resume
@@ -1570,12 +1647,19 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
 
   useEffect(() => {
-    if (session?.status === 'countdown' && session.countdownValue !== undefined) {
-      setLocalCountdown(session.countdownValue);
+    if (session?.status === 'countdown' && session.countdownEndsAt) {
+      const update = () => {
+        const endsAt = session.countdownEndsAt.toDate ? session.countdownEndsAt.toDate().getTime() : session.countdownEndsAt;
+        const remaining = Math.ceil((endsAt - Date.now()) / 1000);
+        setLocalCountdown(remaining > 0 ? remaining : 0);
+      };
+      update();
+      const interval = setInterval(update, 100);
+      return () => clearInterval(interval);
     } else {
       setLocalCountdown(null);
     }
-  }, [session?.status, session?.countdownValue]);
+  }, [session?.status, session?.countdownEndsAt]);
 
   useEffect(() => {
     const checkStatus = () => {
@@ -1685,7 +1769,7 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       if (session.status === 'ended') {
         // Automatically cleanup and stop native side
         if (window.Android && window.Android.stopFocusSession) {
-          window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
+          window.Android.stopFocusSession(getSessionToken());
         }
       }
       
@@ -1697,7 +1781,10 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
         if (doc.exists()) {
           setBuddy({ id: doc.id, ...doc.data() } as Buddy);
         } else {
-          // Kicked or session ended
+          // Check if session status is not ended (implies rejection)
+          if (session && session.status !== 'ended') {
+            setError('You were removed from the session by the admin.');
+          }
           setSession(null);
           setBuddy(null);
         }
@@ -1708,6 +1795,40 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       };
     }
   }, [session?.id, buddy?.id]);
+
+  // Admin presence checker on buddy side
+  useEffect(() => {
+    if (!session || !session.id || session.status === 'ended') return;
+    
+    const checkAdminPresence = () => {
+      if (!session.lastActive) return;
+      const lastActiveTime = session.lastActive.toDate ? session.lastActive.toDate().getTime() : session.lastActive;
+      const goneFor = Date.now() - lastActiveTime;
+      if (goneFor > 120000) { // 2 minutes
+        console.log("Admin presence timeout — auto-ending session");
+        if (window.Android && window.Android.stopFocusSession) {
+          window.Android.stopFocusSession(getSessionToken());
+        }
+        
+        setError("Admin disconnected. Focus session ended.");
+        setSession(null);
+        setBuddy(null);
+        
+        if (session.status === 'active' || session.status === 'paused') {
+          updateDoc(doc(db, 'sessions', session.id), {
+            status: 'ended',
+            focusActive: false,
+            endedAt: serverTimestamp()
+          }).catch(err => {
+            console.error("Failed to set session status to ended:", err);
+          });
+        }
+      }
+    };
+
+    const interval = setInterval(checkAdminPresence, 10000); // Check every 10 seconds
+    return () => clearInterval(interval);
+  }, [session?.id, session?.status, session?.lastActive]);
 
   const joinSession = async () => {
     if (!sessionCode || !name) {
@@ -1735,6 +1856,12 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
 
       if (sessionData.status === 'ended') {
         setError('This session has already ended.');
+        setJoining(false);
+        return;
+      }
+
+      if (sessionData.status === 'countdown') {
+        setError('Session is starting — cannot join right now.');
         setJoining(false);
         return;
       }
@@ -2088,6 +2215,14 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
   const engineRef = useRef<FaceSecurityEngineRef>(null);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const [stopRequested, setStopRequested] = useState(buddy.requestStop || false);
+  const [pauseRequested, setPauseRequested] = useState(buddy.requestPause || false);
+
+  useEffect(() => {
+    setStopRequested(buddy.requestStop || false);
+    setPauseRequested(buddy.requestPause || false);
+  }, [buddy.requestStop, buddy.requestPause]);
+
   useEffect(() => {
     const checkScreen = () => {
       if (window.Android && window.Android.isScreenOn) {
@@ -2102,8 +2237,14 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
   }, []);
 
   useEffect(() => {
+    if (window.Android && buddy.whitelistedApps) {
+      window.Android.updateWhitelist(JSON.stringify(buddy.whitelistedApps), getSessionToken());
+    }
+  }, [buddy.whitelistedApps]);
+
+  useEffect(() => {
     if (window.Android) {
-      const token = localStorage.getItem('session_token') || '';
+      const token = getSessionToken();
       if (isActive && !buddy.pausedByFace) {
         window.Android.startFocusSession(JSON.stringify(buddy.whitelistedApps || []), session.id, buddy.id, token);
       } else {
@@ -2112,11 +2253,10 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
     }
     return () => {
       if (window.Android) {
-        const token = localStorage.getItem('session_token') || '';
-        window.Android.stopFocusSession(token);
+        window.Android.stopFocusSession(getSessionToken());
       }
     };
-  }, [isActive, isPaused, isEnded, buddy.pausedByFace, buddy.whitelistedApps, session.id, buddy.id]);
+  }, [isActive, isPaused, isEnded, buddy.pausedByFace, session.id, buddy.id]);
 
   useEffect(() => {
     if (window.Android && window.Android.getAppIcon) {
@@ -2135,18 +2275,22 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
   useEffect(() => {
     if (isEnded) { setTimeLeft(0); return; }
     let timer: NodeJS.Timeout;
-    if (session.status === 'active' && session.startTime) {
+    if ((session.status === 'active' || session.status === 'paused') && session.startTime) {
       const start = session.startTime.toDate ? session.startTime.toDate().getTime() : session.startTime;
       const checkAndSetTime = () => {
-        const now = Date.now();
-        const diff = Math.floor((now - start) / 1000);
-        const remaining = Math.max(0, session.timerSeconds - diff);
+        const now = session.status === 'paused' && session.pausedAt
+          ? (session.pausedAt.toDate ? session.pausedAt.toDate().getTime() : session.pausedAt)
+          : Date.now();
+        const elapsed = Math.floor((now - start) / 1000);
+        const pausedSeconds = session.accumulatedPausedSeconds || 0;
+        const remaining = Math.max(0, session.timerSeconds - elapsed + pausedSeconds);
         setTimeLeft(remaining);
+        
         if (remaining <= 0) {
           if (timer) clearInterval(timer);
           // AUTO END SESSION FROM BUDDY SIDE (safeguard)
           if (window.Android && window.Android.stopFocusSession) {
-            window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
+            window.Android.stopFocusSession(getSessionToken());
           }
           updateDoc(doc(db, 'sessions', session.id), {
             status: 'ended',
@@ -2163,17 +2307,12 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
       };
 
       const ended = checkAndSetTime();
-      if (!ended) {
+      if (!ended && session.status === 'active') {
         timer = setInterval(checkAndSetTime, 1000);
       }
-    } else if (isPaused && session.startTime) {
-      const start = session.startTime.toDate ? session.startTime.toDate().getTime() : session.startTime;
-      const now = Date.now();
-      const diff = Math.floor((now - start) / 1000);
-      setTimeLeft(Math.max(0, session.timerSeconds - diff));
     }
     return () => clearInterval(timer);
-  }, [session.status, session.startTime, session.timerSeconds, isEnded, isPaused]);
+  }, [session.status, session.startTime, session.timerSeconds, session.pausedAt, session.accumulatedPausedSeconds, isEnded]);
 
   const updateVerification = (isLocked: boolean, isPaused: boolean, securityAlert?: string | null) => {
     if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
@@ -2203,7 +2342,7 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
 
   const launchApp = (packageName: string) => {
     if (window.Android && window.Android.launchApp) {
-      window.Android.launchApp(packageName, localStorage.getItem('session_token') || '');
+      window.Android.launchApp(packageName, getSessionToken());
     }
   };
 
@@ -2378,29 +2517,41 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
             <div className="grid grid-cols-2 gap-3">
               <motion.button 
                 whileTap={{ scale: 0.95 }}
+                disabled={stopRequested}
                 onClick={async () => {
                   try {
+                    setStopRequested(true);
                     await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { requestStop: true });
                   } catch (err) {
+                    setStopRequested(buddy.requestStop || false);
                     handleFirestoreError(err, OperationType.UPDATE, `sessions/${session.id}/buddies/${buddy.id}`);
                   }
                 }}
-                className="py-3.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl text-red-500 hover:bg-red-50 transition-colors text-[9px] font-black uppercase tracking-widest shadow-sm"
+                className={cn(
+                  "py-3.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl text-red-500 hover:bg-red-50 transition-colors text-[9px] font-black uppercase tracking-widest shadow-sm",
+                  stopRequested && "opacity-50 cursor-not-allowed"
+                )}
               >
-                Request Stop
+                {stopRequested ? '✓ Stop Requested' : 'Request Stop'}
               </motion.button>
               <motion.button 
                 whileTap={{ scale: 0.95 }}
+                disabled={pauseRequested}
                 onClick={async () => {
                   try {
+                    setPauseRequested(true);
                     await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { requestPause: true });
                   } catch (err) {
+                    setPauseRequested(buddy.requestPause || false);
                     handleFirestoreError(err, OperationType.UPDATE, `sessions/${session.id}/buddies/${buddy.id}`);
                   }
                 }}
-                className="py-3.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl text-yellow-600 hover:bg-yellow-50 transition-colors text-[9px] font-black uppercase tracking-widest shadow-sm"
+                className={cn(
+                  "py-3.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl text-yellow-600 hover:bg-yellow-50 transition-colors text-[9px] font-black uppercase tracking-widest shadow-sm",
+                  pauseRequested && "opacity-50 cursor-not-allowed"
+                )}
               >
-                Request Pause
+                {pauseRequested ? '✓ Pause Requested' : 'Request Pause'}
               </motion.button>
             </div>
             
