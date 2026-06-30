@@ -182,24 +182,39 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
         val sessionId = sessionIdRef.get() ?: return
         val buddyId = buddyIdRef.get() ?: return
 
-        val updates = hashMapOf<String, Any>(
-            "pausedByFace" to true,
-            "lastFaceMatch" to false
-        )
-        if (faceCount > 1) {
-            updates["securityAlert"] = "STRANGER_DETECTED"
-        } else {
-            updates["securityAlert"] = "CAMERA_BLOCKED_OR_NO_FACE"
+        val updates = hashMapOf<String, Any>()
+
+        when {
+            // 0 faces = camera covered / nobody / dark
+            // ANTI-ESCAPE: keep locked, timer runs, kiosk ON
+            faceCount == 0 -> {
+                updates["pausedByFace"] = false
+                updates["lastFaceMatch"] = true  // don't trigger pause
+                updates["securityAlert"] = "CAMERA_BLOCKED_OR_NO_FACE"
+            }
+            // 1 face = possibly buddy, possibly stranger
+            // Native ML Kit can't do identity matching — let the WebView
+            // face engine decide. Don't touch pausedByFace here.
+            faceCount == 1 -> {
+                updates["securityAlert"] = "NATIVE_FACE_CHECK_PENDING"
+            }
+            // >1 faces = buddy + stranger, or multiple strangers
+            // LOCKED: timer runs, kiosk ON (buddy + stranger = locked per intent)
+            faceCount > 1 -> {
+                updates["pausedByFace"] = false
+                updates["lastFaceMatch"] = true
+                updates["securityAlert"] = "MULTIPLE_FACES_DETECTED"
+            }
         }
 
         db.collection("sessions").document(sessionId)
             .collection("buddies").document(buddyId)
             .update(updates)
             .addOnSuccessListener {
-                Log.w(TAG, "Reported Native Face Violation: $faceCount faces")
+                Log.w(TAG, "Reported native face event: $faceCount faces → ${updates["securityAlert"]}")
             }
             .addOnFailureListener { e ->
-                Log.e(TAG, "Failed to report native face violation", e)
+                Log.e(TAG, "Failed to report native face event", e)
             }
     }
 
