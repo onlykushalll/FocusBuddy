@@ -199,6 +199,10 @@ interface Session {
   endedAt?: any;
   countdownValue?: number | null;
   buddyIds?: string[];
+  pausedAt?: any;
+  accumulatedPausedSeconds?: number;
+  countdownEndsAt?: any;
+  lastActive?: any;
 }
 
 interface AppInfo {
