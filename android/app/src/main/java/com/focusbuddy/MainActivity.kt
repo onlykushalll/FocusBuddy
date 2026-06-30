@@ -136,6 +136,33 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (GlobalState.isSessionActive) {
+            startAnalyzerService("ACTION_STOP_CAMERA")
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (GlobalState.isSessionActive) {
+            startAnalyzerService("ACTION_START_CAMERA")
+        }
+    }
+
+    private fun startAnalyzerService(actionStr: String) {
+        val intent = Intent(this, FaceAnalyzerService::class.java).apply {
+            action = actionStr
+            putExtra("sessionId", GlobalState.sessionId)
+            putExtra("buddyId", GlobalState.buddyId)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (GlobalState.isSessionActive) {
             when (keyCode) {

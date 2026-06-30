@@ -5,32 +5,25 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.os.Handler
 import android.os.HandlerThread
-import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import com.focusbuddy.GlobalState
 import com.focusbuddy.MainActivity
 import com.focusbuddy.managers.WhitelistManager
-import android.content.pm.PackageManager
 
 /**
  * FocusLockService — Maximum-strength AccessibilityService kiosk enforcement.
- *
- * Implements all 5 MDM/Kiosk requirements:
- * 1. Fast event handling via background thread (<100ms).
- * 2. Aggressive pullback with priority flags.
- * 3. Multi-OEM hard-blocked uninstall/settings guard.
- * 4. Escalation mode (repeat-fire every 500ms after 2s of block).
- * 5. Deep shared state integration.
+ * Upgraded to Instant watchdog (millisecond pullback, launcher removed).
  */
 class AppBlockAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "FocusLockService"
-        private const val INSTANT_DEBOUNCE_MS   = 80L
-        private const val PERSISTENCE_TICK_MS   = 500L
-        private const val ESCALATION_THRESHOLD_MS = 2000L
+        
+        // PERSISTENCE constants
+        private const val PERSISTENCE_TICK_MS   = 50L    // 50ms check
+        private const val ESCALATION_THRESHOLD_MS = 200L  // 200ms before aggressive pullback
 
         private val HARD_BLOCKED_PACKAGES = setOf(
             "com.android.settings", "com.google.android.settings", "com.samsung.android.settings",
@@ -45,26 +38,17 @@ class AppBlockAccessibilityService : AccessibilityService() {
         )
 
         private val ALWAYS_ALLOWED_SYSTEM = setOf(
-            "com.android.systemui", "com.samsung.android.systemui", "android",
-            "com.android.launcher", "com.google.android.apps.nexuslauncher", "com.miui.home"
+            "com.android.systemui", "com.samsung.android.systemui", "android"
+            // Launcher removed — FocusMode is the home screen
         )
     }
 
     private val bgThread = HandlerThread("FocusLock-BG", Thread.NORM_PRIORITY + 1).also { it.start() }
     private val bgHandler   = Handler(bgThread.looper)
 
-    @Volatile private var lastEvaluatedPackage = ""
-    @Volatile private var lastDebounceMs = 0L
     @Volatile private var blockedPackage = ""
     @Volatile private var blockedSinceMs = 0L
     @Volatile private var persistenceActive = false
-
-    private val launcherGraceRunnable = Runnable {
-        if (GlobalState.isSessionActive) {
-            Log.i(TAG, "Launcher grace period expired — executing pullback to Focus Mode")
-            firePullback()
-        }
-    }
 
     private val persistenceRunnable = object : Runnable {
         override fun run() {
@@ -101,7 +85,7 @@ class AppBlockAccessibilityService : AccessibilityService() {
         }
         val pkg = event?.packageName?.toString() ?: return
 
-        // Block notification shade expansion
+        // Block notification shade expansion instantly
         if (pkg == "com.android.systemui" || pkg == "com.samsung.android.systemui") {
             if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 val className = event.className?.toString() ?: ""
@@ -117,7 +101,7 @@ class AppBlockAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Block Google Assistant overlay
+        // Block Google Assistant overlay instantly
         if (pkg == "com.google.android.googlequicksearchbox" ||
             pkg == "com.google.android.voiceinteraction" ||
             pkg == "com.google.android.apps.assistant") {
@@ -126,11 +110,8 @@ class AppBlockAccessibilityService : AccessibilityService() {
             return
         }
 
-        val now = System.currentTimeMillis()
-        if (pkg == lastEvaluatedPackage && now - lastDebounceMs < INSTANT_DEBOUNCE_MS) return
-        lastEvaluatedPackage = pkg
-        lastDebounceMs = now
-        bgHandler.post { evaluatePackage(pkg) }
+        // Synchronous evaluation — no thread switch or debounce delay
+        evaluatePackage(pkg)
     }
 
     override fun onKeyEvent(event: KeyEvent?): Boolean {
@@ -142,47 +123,25 @@ class AppBlockAccessibilityService : AccessibilityService() {
     }
 
     private fun evaluatePackage(pkg: String) {
-        if (!GlobalState.isSessionActive) {
-            bgHandler.removeCallbacks(launcherGraceRunnable)
-            return
+        if (!GlobalState.isSessionActive) return
+        
+        when {
+            HARD_BLOCKED_PACKAGES.contains(pkg) -> onBlockedAppDetected(pkg)
+            pkg == packageName -> resetPersistenceState()  // FocusBuddy itself
+            WhitelistManager.isAllowed(pkg) -> resetPersistenceState()
+            ALWAYS_ALLOWED_SYSTEM.contains(pkg) -> resetPersistenceState()
+            else -> onBlockedAppDetected(pkg)  // launcher + all non-whitelisted apps
         }
-        if (HARD_BLOCKED_PACKAGES.contains(pkg)) {
-            bgHandler.removeCallbacks(launcherGraceRunnable)
-            onBlockedAppDetected(pkg)
-        } else if (pkg == packageName || WhitelistManager.isAllowed(pkg)) {
-            bgHandler.removeCallbacks(launcherGraceRunnable)
-            resetPersistenceState()
-        } else if (ALWAYS_ALLOWED_SYSTEM.contains(pkg)) {
-            if (isLauncher(pkg)) {
-                // User is on home launcher. Allow 2.5s grace period to tap a whitelisted app, otherwise pull back.
-                bgHandler.removeCallbacks(launcherGraceRunnable)
-                bgHandler.postDelayed(launcherGraceRunnable, 2500L)
-            } else {
-                bgHandler.removeCallbacks(launcherGraceRunnable)
-                resetPersistenceState()
-            }
-        } else {
-            bgHandler.removeCallbacks(launcherGraceRunnable)
-            onBlockedAppDetected(pkg)
-        }
-    }
-
-    private fun isLauncher(pkg: String): Boolean {
-        val intent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_HOME)
-        }
-        val resolveInfo = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
-        val defaultLauncher = resolveInfo?.activityInfo?.packageName
-        return pkg == defaultLauncher || pkg.contains("launcher") || pkg.contains("home")
     }
 
     private fun onBlockedAppDetected(pkg: String) {
-        bgHandler.removeCallbacks(launcherGraceRunnable)
         val now = System.currentTimeMillis()
-        if (now - GlobalState.lastPullbackTime >= INSTANT_DEBOUNCE_MS) {
-            GlobalState.lastPullbackTime = now
-            firePullback()
-        }
+        
+        // INSTANT pullback — no debounce
+        // Use GLOBAL_ACTION_BACK first (instant), then startActivity (slower but thorough)
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        firePullback()
+        
         if (blockedPackage != pkg) {
             blockedPackage = pkg
             blockedSinceMs = now
@@ -212,7 +171,6 @@ class AppBlockAccessibilityService : AccessibilityService() {
 
     private fun resetPersistenceState() {
         stopPersistence()
-        bgHandler.removeCallbacks(launcherGraceRunnable)
         blockedPackage = ""
         blockedSinceMs = 0L
     }

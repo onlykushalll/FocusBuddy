@@ -502,6 +502,7 @@ export default function App() {
                   setRole(null);
                 }} 
                 user={user!} 
+                darkMode={darkMode}
               />
             )}
           </AnimatePresence>
@@ -780,6 +781,9 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
   const [lastSession, setLastSession] = useState<{ id: string, duration: number, endedAt: Date } | null>(null);
   const [isServiceActive, setIsServiceActive] = useState(true); // Default to true to avoid flicker
   const [loadingSession, setLoadingSession] = useState(false);
+  
+  const [rejectingBuddyId, setRejectingBuddyId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
   const isEnded = session?.status === 'ended';
   const isPaused = session?.status === 'paused';
   const isActive = session?.status === 'active';
@@ -1075,6 +1079,27 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       console.log('Buddy removed:', buddyId);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `sessions/${session.id}/buddies/${buddyId}`);
+    }
+  };
+
+  const rejectBuddy = async (buddyId: string, reason: string) => {
+    if (!session) return;
+    const verified = await verifyAdminBiometrics();
+    if (!verified) return;
+    
+    try {
+      await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddyId), {
+        status: 'rejected',
+        rejectionReason: reason,
+        requireFaceRereg: true,
+        reregCause: reason,
+        faceImage: null,
+        faceDescriptor: null,
+      });
+      setRejectingBuddyId(null);
+      setRejectReason('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `sessions/${session.id}/buddies/${buddyId}`);
     }
   };
 
@@ -1460,7 +1485,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                         </motion.button>
                         <motion.button 
                           whileTap={{ scale: 0.95 }}
-                          onClick={() => removeBuddy(buddy.id)}
+                          onClick={() => setRejectingBuddyId(buddy.id)}
                           className="px-4 bg-red-500/10 text-red-500 rounded-xl font-bold text-[9px] uppercase tracking-widest"
                         >
                           Reject
@@ -1565,6 +1590,78 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
           </div>
         )}
       </AnimatePresence>
+      
+      <AnimatePresence>
+        {rejectingBuddyId && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center px-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => { setRejectingBuddyId(null); setRejectReason(''); }}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-8 rounded-[2.5rem] shadow-2xl z-10"
+            >
+              <h3 className="text-xl font-black mb-4 tracking-tight">Reject Face Registration</h3>
+              <p className="text-sm text-neutral-500 mb-6 font-medium">
+                Please provide a reason. The buddy will need to re-register their face.
+              </p>
+              
+              <div className="space-y-2 mb-6">
+                {[
+                  'Photo detected — not a real face',
+                  'Face does not match expected person',
+                  'Poor lighting / blurry image',
+                  'Face partially covered',
+                  'Multiple faces detected',
+                  'Other (specify below)',
+                ].map(reason => (
+                  <button
+                    key={reason}
+                    onClick={() => setRejectReason(reason)}
+                    className={cn(
+                      "w-full text-left p-3 rounded-xl border transition-all text-xs font-semibold",
+                      rejectReason === reason
+                        ? "border-red-500 bg-red-500/10 text-red-600"
+                        : "border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-400"
+                    )}
+                  >
+                    {reason}
+                  </button>
+                ))}
+                <input
+                  type="text"
+                  placeholder="Custom reason..."
+                  value={rejectReason.startsWith('Other') ? '' : rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  className="w-full p-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-transparent text-xs text-neutral-900 dark:text-white focus:outline-none focus:border-red-500 font-bold"
+                />
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setRejectingBuddyId(null); setRejectReason(''); }}
+                  className="flex-1 py-3 rounded-xl border border-neutral-200 dark:border-neutral-800 text-xs font-bold text-neutral-600 dark:text-neutral-400"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => rejectBuddy(rejectingBuddyId, rejectReason)}
+                  disabled={!rejectReason}
+                  className="flex-1 py-3 rounded-xl bg-red-500 text-white text-xs font-bold disabled:opacity-50"
+                >
+                  Reject & Request
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1639,7 +1736,7 @@ function AboutView({ onBack }: { onBack: () => void }) {
 
 // --- Buddy Flow ---
 
-function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, key?: string }) {
+function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: FirebaseUser, darkMode: boolean, key?: string }) {
   const [sessionCode, setSessionCode] = useState('');
   const [session, setSession] = useState<Session | null>(null);
   const [buddy, setBuddy] = useState<Buddy | null>(null);
@@ -1942,7 +2039,11 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
     try {
       await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), {
         faceImage: faceSnapshot,
-        faceDescriptor: descriptor
+        faceDescriptor: descriptor,
+        status: 'pending',
+        rejectionReason: null,
+        requireFaceRereg: false,
+        reregCause: null
       });
       console.log('Face registered successfully');
       setShowFaceReg(false);
@@ -1980,6 +2081,48 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       );
     }
 
+    useEffect(() => {
+      if (session?.id && buddy?.id) {
+        updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { isOnline: true }).catch(() => {});
+        return () => {
+          updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { isOnline: false }).catch(() => {});
+        };
+      }
+    }, [session?.id, buddy?.id]);
+
+    if (buddy.status === 'rejected') {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#FDFBF0] dark:bg-neutral-950 min-h-screen">
+          <div className="w-20 h-20 bg-red-500/10 rounded-[2rem] flex items-center justify-center mb-6 text-red-500 border border-red-500/20 shadow-xl shadow-red-500/10">
+            <XCircle className="w-10 h-10" />
+          </div>
+          <h2 className="text-3xl font-black mb-4 tracking-tight">Face Registration Rejected</h2>
+          <p className="text-[#707A3E] font-bold mb-4 text-sm leading-relaxed">The admin could not verify your identity.</p>
+          
+          {buddy.reregCause && (
+            <div className="mb-8 p-4 bg-red-500/5 border border-red-500/20 rounded-2xl max-w-xs w-full text-center">
+              <div className="text-[8px] font-bold uppercase tracking-widest text-red-500 mb-1">
+                Reason
+              </div>
+              <div className="text-xs text-neutral-700 dark:text-neutral-300 font-bold">
+                {buddy.reregCause}
+              </div>
+            </div>
+          )}
+          
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setShowFaceReg(true)}
+            className="bg-[#707A3E] text-white px-12 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-[#707A3E]/30 active:scale-95 transition-all w-full max-w-xs"
+          >
+            Re-register Face
+          </motion.button>
+          
+          {showFaceReg && <FaceRegistration onComplete={registerFace} onCancel={() => setShowFaceReg(false)} />}
+        </div>
+      );
+    }
+
     if ((session.status === 'active' || session.status === 'paused') && buddy.status === 'approved') {
       if (!buddy.faceImage) {
         return (
@@ -2002,7 +2145,7 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
           </div>
         );
       }
-      return <FocusMode session={session} buddy={buddy} />;
+      return <FocusMode session={session} buddy={buddy} darkMode={darkMode} />;
     }
 
     return (
@@ -2209,7 +2352,7 @@ function BuddyFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
   );
 }
 
-function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
+function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Buddy, darkMode: boolean }) {
   const [timeLeft, setTimeLeft] = useState(0);
   const isEnded = session.status === 'ended';
   const isPaused = session.status === 'paused';
@@ -2468,58 +2611,103 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
         </motion.div>
       ) : (
         <>
-          <div className="flex items-center justify-between mb-8 relative z-10 flex-shrink-0">
-            <div className="flex items-center gap-2 text-[#707A3E] bg-[#707A3E]/10 px-4 py-2 rounded-full border border-[#707A3E]/20">
-              <Lock className="w-4 h-4" />
-              <span className="text-[8px] font-black uppercase tracking-[0.2em]">Focus Mode Active</span>
+          {/* Header */}
+          <div className="relative z-10 px-8 pt-12 pb-6 flex-shrink-0 flex items-center justify-between">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full" 
+              style={{ 
+                background: darkMode ? 'rgba(112,122,62,0.15)' : 'rgba(112,122,62,0.08)',
+                border: '1px solid rgba(112,122,62,0.2)',
+              }}
+            >
+              <div className="w-1.5 h-1.5 rounded-full bg-[#707A3E] animate-pulse" />
+              <span className="text-[9px] font-bold uppercase tracking-[0.25em] text-[#707A3E]">
+                Focusing
+              </span>
             </div>
-            <div className="text-2xl font-mono font-black text-neutral-900 dark:text-white tabular-nums tracking-tight">
-              {formatTime(timeLeft)}
-            </div>
-          </div>
-
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="text-neutral-500 text-[8px] uppercase tracking-[0.2em] mb-4 text-left font-black flex-shrink-0">Whitelisted Apps</div>
             
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
-              <div className="grid grid-cols-3 gap-4 pb-4">
-                {whitelistedAppInfos.map(app => (
-                  <motion.button
-                    key={app.packageName}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => launchApp(app.packageName)}
-                    className="flex flex-col items-center gap-2 group"
-                  >
-                    <div className="w-14 h-14 bg-white dark:bg-neutral-900 rounded-2xl flex items-center justify-center overflow-hidden border border-neutral-200 dark:border-neutral-800 shadow-sm group-hover:shadow-[#707A3E]/10 transition-shadow">
-                      {appIcons[app.packageName] ? (
-                        <img 
-                          src={appIcons[app.packageName]} 
-                          alt={app.label} 
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <Smartphone className="w-6 h-6 text-neutral-400" />
-                      )}
-                    </div>
-                    <span className="text-[9px] font-bold text-neutral-500 truncate w-full px-1">
-                      {app.label}
-                    </span>
-                  </motion.button>
-                ))}
-                
-                {whitelistedAppInfos.length === 0 && (
-                  <div className="col-span-full py-8 text-center text-neutral-400 border-2 border-dashed border-neutral-100 dark:border-neutral-900 rounded-2xl text-[10px] font-bold uppercase tracking-widest">
-                    No apps whitelisted
-                  </div>
-                )}
-              </div>
+            <span className="text-[10px] font-mono text-neutral-400 tracking-wider animate-pulse">
+              {session.id}
+            </span>
+          </div>
+
+          <div className="text-center mb-6 flex-shrink-0">
+            <motion.div 
+              key={timeLeft}
+              initial={{ opacity: 0.5, y: -2 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.15 }}
+              className="text-[72px] font-black tabular-nums tracking-tighter leading-none"
+              style={{ 
+                fontFamily: '"SF Pro Display", "Inter", system-ui, sans-serif',
+                color: timeLeft < 60 ? '#ef4444' : darkMode ? '#E1E8C1' : '#707A3E',
+              }}
+            >
+              {formatTime(timeLeft)}
+            </motion.div>
+            <div className="text-[9px] font-bold uppercase tracking-[0.3em] text-neutral-400 mt-2">
+              Time Remaining
             </div>
           </div>
 
-          <div className="mt-6 space-y-4 flex-shrink-0">
-            <div className="grid grid-cols-2 gap-3">
-              <motion.button 
+          {/* Launcher Grid */}
+          <div className="flex-1 overflow-y-auto px-8 pb-4 relative z-10 custom-scrollbar">
+            <div className="text-[9px] font-bold uppercase tracking-[0.3em] text-neutral-400 mb-6 text-left">
+              Your Apps
+            </div>
+            
+            <div className="grid grid-cols-4 gap-5">
+              {whitelistedAppInfos.map((app, index) => (
+                <motion.button
+                  key={app.packageName}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.03, duration: 0.2 }}
+                  whileTap={{ scale: 0.92 }}
+                  whileHover={{ y: -2 }}
+                  onClick={() => launchApp(app.packageName)}
+                  className="flex flex-col items-center gap-2.5 group animate-fade-in"
+                >
+                  <div 
+                    className="w-[60px] h-[60px] rounded-[18px] flex items-center justify-center overflow-hidden transition-all duration-200 group-active:scale-95"
+                    style={{
+                      background: darkMode 
+                        ? 'rgba(255,255,255,0.08)' 
+                        : 'rgba(255,255,255,0.9)',
+                      border: `1px solid ${darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
+                      boxShadow: darkMode
+                        ? '0 4px 12px rgba(0,0,0,0.3)'
+                        : '0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+                    }}
+                  >
+                    {appIcons[app.packageName] ? (
+                      <img 
+                        src={appIcons[app.packageName]} 
+                        alt={app.label} 
+                        className="w-[36px] h-[36px] object-contain"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <Smartphone className="w-6 h-6 text-neutral-400" />
+                    )}
+                  </div>
+                  <span className="text-[9px] font-bold text-neutral-500 dark:text-neutral-400 truncate w-full text-center max-w-[72px]">
+                    {app.label}
+                  </span>
+                </motion.button>
+              ))}
+
+              {whitelistedAppInfos.length === 0 && (
+                <div className="col-span-full py-8 text-center text-neutral-400 border-2 border-dashed border-neutral-100 dark:border-neutral-900 rounded-2xl text-[10px] font-bold uppercase tracking-widest">
+                  No apps whitelisted
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer controls */}
+          <div className="relative z-10 px-8 pb-10 pt-4 flex-shrink-0">
+            <div className="flex gap-3 mb-4">
+              <motion.button
                 whileTap={{ scale: 0.95 }}
                 disabled={stopRequested}
                 onClick={async () => {
@@ -2532,13 +2720,15 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
                   }
                 }}
                 className={cn(
-                  "py-3.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl text-red-500 hover:bg-red-50 transition-colors text-[9px] font-black uppercase tracking-widest shadow-sm",
-                  stopRequested && "opacity-50 cursor-not-allowed"
+                  "flex-1 py-3.5 rounded-2xl font-bold text-[10px] uppercase tracking-[0.2em] transition-all",
+                  stopRequested 
+                    ? "bg-neutral-100 dark:bg-neutral-900 text-neutral-400 cursor-not-allowed"
+                    : "bg-white dark:bg-neutral-900 text-neutral-500 border border-neutral-200 dark:border-neutral-800 hover:border-red-200 hover:text-red-500 shadow-sm"
                 )}
               >
-                {stopRequested ? '✓ Stop Requested' : 'Request Stop'}
+                {stopRequested ? '✓ Requested' : 'Request Stop'}
               </motion.button>
-              <motion.button 
+              <motion.button
                 whileTap={{ scale: 0.95 }}
                 disabled={pauseRequested}
                 onClick={async () => {
@@ -2551,16 +2741,18 @@ function FocusMode({ session, buddy }: { session: Session, buddy: Buddy }) {
                   }
                 }}
                 className={cn(
-                  "py-3.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl text-yellow-600 hover:bg-yellow-50 transition-colors text-[9px] font-black uppercase tracking-widest shadow-sm",
-                  pauseRequested && "opacity-50 cursor-not-allowed"
+                  "flex-1 py-3.5 rounded-2xl font-bold text-[10px] uppercase tracking-[0.2em] transition-all",
+                  pauseRequested
+                    ? "bg-neutral-100 dark:bg-neutral-900 text-neutral-400 cursor-not-allowed"
+                    : "bg-white dark:bg-neutral-900 text-neutral-500 border border-neutral-200 dark:border-neutral-800 hover:border-yellow-200 hover:text-yellow-600 shadow-sm"
                 )}
               >
-                {pauseRequested ? '✓ Pause Requested' : 'Request Pause'}
+                {pauseRequested ? '✓ Requested' : 'Request Pause'}
               </motion.button>
             </div>
             
-            <div className="text-neutral-400 text-[7px] uppercase tracking-[0.5em] font-black opacity-50">
-              Strict Anti-Exit Protection Enabled
+            <div className="text-center text-[8px] font-medium text-neutral-300 dark:text-neutral-700 uppercase tracking-[0.4em]">
+              Stay focused · Stay present
             </div>
           </div>
         </>

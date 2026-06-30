@@ -1211,6 +1211,19 @@ export function useFaceSecurityEngine(
     if (isRegistering.current) {
       if (faceCount === 1 && !usingFallback.current) {
         const kps: Kps = detectedFaces[0].keypoints;
+        
+        // Run liveness check during enrollment
+        if (video) {
+          const liveness = livenessRef.current.update(kps, video);
+          if (liveness.score < 0.6) {
+            setState(s => ({ 
+              ...s, 
+              registrationPrompt: 'LIVENESS CHECK FAILED — Real face required',
+            }));
+            return;
+          }
+        }
+
         const desc = computeDescriptor(kps);
         if (desc) {
           const yaw = getFaceYaw(kps);

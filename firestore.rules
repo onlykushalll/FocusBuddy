@@ -49,7 +49,10 @@ service cloud.firestore {
              (!('pausedByFace' in data) || data.pausedByFace is bool) &&
              (!('lastFaceMatch' in data) || data.lastFaceMatch is bool) &&
              (!('securityThreats' in data) || data.securityThreats is map) &&
-             (!('securityAlert' in data) || data.securityAlert is string);
+             (!('securityAlert' in data) || data.securityAlert is string) &&
+             (!('rejectionReason' in data) || data.rejectionReason is string || data.rejectionReason == null) &&
+             (!('requireFaceRereg' in data) || data.requireFaceRereg is bool) &&
+             (!('reregCause' in data) || data.reregCause is string || data.reregCause == null);
     }
 
     match /sessions/{sessionId} {
@@ -107,18 +110,27 @@ service cloud.firestore {
                           // Buddy: ONLY allowed fields depending on session state
                           (
                             buddyId == request.auth.uid &&
-                            // Whitelist and status can NEVER be changed by the buddy
                             request.resource.data.whitelistedApps == resource.data.whitelistedApps &&
-                            request.resource.data.status == resource.data.status &&
                             request.resource.data.name == resource.data.name &&
                             request.resource.data.installedApps == resource.data.installedApps &&
                             (
-                              // If session is in lobby, buddy can register face
+                              // If session is in lobby, buddy can register face (or re-register if rejected)
                               (getSession(sessionId).status == 'lobby' &&
-                               request.resource.data.diff(resource.data).affectedKeys()
-                                 .hasOnly(['faceDescriptor', 'faceImage', 'isOnline'])) ||
+                               (
+                                 // Simple registration (pending -> pending)
+                                 (request.resource.data.status == resource.data.status &&
+                                  request.resource.data.diff(resource.data).affectedKeys()
+                                    .hasOnly(['faceDescriptor', 'faceImage', 'isOnline'])) ||
+                                 // Re-registration (rejected -> pending)
+                                 (resource.data.status == 'rejected' &&
+                                  request.resource.data.status == 'pending' &&
+                                  request.resource.data.diff(resource.data).affectedKeys()
+                                    .hasOnly(['faceDescriptor', 'faceImage', 'status', 'rejectionReason', 'requireFaceRereg', 'reregCause', 'isOnline']))
+                               )
+                              ) ||
                               // If session is active/paused/countdown/ended, buddy can update verification, request flags, and security reports
                               (getSession(sessionId).status != 'lobby' &&
+                               request.resource.data.status == resource.data.status &&
                                request.resource.data.faceDescriptor == resource.data.faceDescriptor &&
                                request.resource.data.faceImage == resource.data.faceImage &&
                                request.resource.data.diff(resource.data).affectedKeys()
