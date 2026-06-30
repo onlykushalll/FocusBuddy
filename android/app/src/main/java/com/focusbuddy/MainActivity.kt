@@ -37,6 +37,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import com.focusbuddy.managers.WhitelistManager
 import com.focusbuddy.services.FaceAnalyzerService
+import com.focusbuddy.R
 
 /**
  * MainActivity: UPGRADED Core Focus Mode Controller.
@@ -67,9 +68,7 @@ class MainActivity : AppCompatActivity() {
         GlobalState.init(this)
         checkPermission(Manifest.permission.CAMERA, cameraPermissionCode)
 
-        setContentView(R.layout.activity_main)
-
-        webView = findViewById(R.id.webView)
+        webView = WebView(this).also { setContentView(it) }
 
         // Disable WebView debugging in release builds
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {

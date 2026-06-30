@@ -11,6 +11,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import com.focusbuddy.GlobalState
+import com.focusbuddy.MainActivity
 import com.focusbuddy.security.SecurityChecker
 import com.google.firebase.firestore.FirebaseFirestore
 import java.util.concurrent.atomic.AtomicReference
