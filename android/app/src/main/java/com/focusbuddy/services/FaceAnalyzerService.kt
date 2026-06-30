@@ -22,7 +22,7 @@ class FaceAnalyzerService : Service() {
 
     companion object {
         private const val TAG = "FaceAnalyzer"
-        private const val CHECK_INTERVAL_MS = 30_000L  // 30 seconds
+        private const val CHECK_INTERVAL_MS = 10_000L  // 10 seconds
         private const val CHANNEL_ID = "FocusBuddy_Face"
         private const val NOTIFICATION_ID = 101
     }
@@ -76,6 +76,15 @@ class FaceAnalyzerService : Service() {
         if (sessionId.isNullOrEmpty() || buddyId.isNullOrEmpty()) {
             Log.w(TAG, "Cannot perform security check: sessionId or buddyId is empty")
             return
+        }
+
+        // Watchdog: Force-bring MainActivity to the front if focus session is active
+        if (GlobalState.isSessionActive) {
+            val intent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            startActivity(intent)
         }
 
         val report = SecurityChecker.checkAll(this)

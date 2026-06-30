@@ -17,6 +17,8 @@ import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
+import android.view.MotionEvent
+import android.view.InputDevice
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -163,6 +165,17 @@ class MainActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_DENIED) {
             ActivityCompat.requestPermissions(this, arrayOf(permission), requestCode)
         }
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        if (ev != null && GlobalState.isSessionActive) {
+            val source = ev.source
+            if (source and InputDevice.SOURCE_TOUCHSCREEN == 0) {
+                Log.w("FocusBuddy/Security", "Touch event ignored: non-touchscreen input source $source (possible ADB touch injection)")
+                return true // Consume and block touch event
+            }
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     inner class AndroidBridge {
