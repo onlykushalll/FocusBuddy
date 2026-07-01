@@ -1748,6 +1748,15 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
   const [localCountdown, setLocalCountdown] = useState<number | null>(null);
 
   useEffect(() => {
+    if (session?.id && buddy?.id) {
+      updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { isOnline: true }).catch(() => {});
+      return () => {
+        updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { isOnline: false }).catch(() => {});
+      };
+    }
+  }, [session?.id, buddy?.id]);
+
+  useEffect(() => {
     if (session?.status === 'countdown' && session.countdownEndsAt) {
       const update = () => {
         const endsAt = session.countdownEndsAt.toDate ? session.countdownEndsAt.toDate().getTime() : session.countdownEndsAt;
@@ -2084,14 +2093,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
       );
     }
 
-    useEffect(() => {
-      if (session?.id && buddy?.id) {
-        updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { isOnline: true }).catch(() => {});
-        return () => {
-          updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { isOnline: false }).catch(() => {});
-        };
-      }
-    }, [session?.id, buddy?.id]);
+
 
     if (buddy.status === 'rejected') {
       return (
