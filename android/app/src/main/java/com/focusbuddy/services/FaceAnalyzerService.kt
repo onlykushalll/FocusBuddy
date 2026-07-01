@@ -41,7 +41,7 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
     }
 
     private val lifecycleRegistry = LifecycleRegistry(this)
-    override fun getLifecycle(): Lifecycle = lifecycleRegistry
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
 
     private val handler = Handler(Looper.getMainLooper())
     private val db = FirebaseFirestore.getInstance()
