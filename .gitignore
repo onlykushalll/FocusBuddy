@@ -25,3 +25,7 @@ android/GradlewRunner.java
 .vscode/
 local.properties
 **/local.properties
+
+# Generated APKs
+*.apk
+public/FocusBuddy.apk
