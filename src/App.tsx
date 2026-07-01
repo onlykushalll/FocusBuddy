@@ -808,10 +808,19 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
           const s = docs[0];
           const data = s.data();
           
-          // Check if session is actually stale (e.g., status is active but time is long gone)
-          // We'll let the user decide but load it for now
-          setSession({ id: s.id, ...data } as Session);
-          localStorage.setItem('active_role', 'ADMIN');
+          // Skip stale lobby sessions older than 1 hour
+          const sessionAge = Date.now() - (data.timestamp?.toDate?.()?.getTime() || 0);
+          if (data.status === 'lobby' && sessionAge > 3600000) {
+            // Auto-end stale session
+            await updateDoc(doc(db, 'sessions', s.id), {
+              status: 'ended',
+              focusActive: false,
+              endedAt: serverTimestamp()
+            });
+          } else {
+            setSession({ id: s.id, ...data } as Session);
+            localStorage.setItem('active_role', 'ADMIN');
+          }
         }
       } catch (e) {
         console.error("Admin check failed:", e);
@@ -1119,7 +1128,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       const confirmEnd = window.confirm("Are you sure you want to end this session? All buddies will be kicked and redirects will happen.");
       if (!confirmEnd) return;
 
-      if (session.status === 'active' || session.status === 'paused' || session.status === 'countdown') {
+      if (session.status === 'active' || session.status === 'paused' || session.status === 'countdown' || session.status === 'lobby') {
         try {
           if (window.Android && window.Android.stopFocusSession) {
             window.Android.stopFocusSession(localStorage.getItem('session_token') || '');
@@ -1827,13 +1836,34 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
         const snap = await getDocs(q);
         if (!snap.empty) {
           const sDoc = snap.docs[0];
+          const data = sDoc.data();
+          
+          // Skip stale lobby sessions older than 1 hour
+          const sessionAge = Date.now() - (data.timestamp?.toDate?.()?.getTime() || 0);
+          if (data.status === 'lobby' && sessionAge > 3600000) {
+            await updateDoc(doc(db, 'sessions', sDoc.id), {
+              status: 'ended',
+              focusActive: false,
+              endedAt: serverTimestamp()
+            });
+            setJoining(false);
+            return;
+          }
+          
           const bRef = doc(db, 'sessions', sDoc.id, 'buddies', user.uid);
           const bSnap = await getDoc(bRef);
           if (bSnap.exists()) {
-            setSession({ id: sDoc.id, ...sDoc.data() } as Session);
+            setSession({ id: sDoc.id, ...data } as Session);
             setBuddy({ id: user.uid, ...bSnap.data() } as Buddy);
             localStorage.setItem('active_session_code', sDoc.id);
             localStorage.setItem('active_role', 'BUDDY');
+          } else {
+            // Buddy doc doesn't exist — clean up buddyIds
+            const currentBuddyIds: string[] = data.buddyIds || [];
+            if (currentBuddyIds.includes(user.uid)) {
+              const updatedBuddyIds = currentBuddyIds.filter(id => id !== user.uid);
+              await updateDoc(doc(db, 'sessions', sDoc.id), { buddyIds: updatedBuddyIds });
+            }
           }
         }
       } catch (e) {
@@ -1860,6 +1890,9 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
             if (bSnap.exists()) {
               setSession({ id: savedCode, ...sSnap.data() } as Session);
               setBuddy({ id: user.uid, ...bSnap.data() } as Buddy);
+            } else {
+              localStorage.removeItem('active_session_code');
+              localStorage.removeItem('active_role');
             }
           } else {
             localStorage.removeItem('active_session_code');
@@ -2176,6 +2209,16 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
                 whileTap={{ scale: 0.95 }}
                 onClick={async () => {
                   if (buddy) {
+                    try {
+                      const sessionSnap = await getDoc(doc(db, 'sessions', session.id));
+                      if (sessionSnap.exists()) {
+                        const currentBuddyIds: string[] = sessionSnap.data().buddyIds || [];
+                        const updatedBuddyIds = currentBuddyIds.filter(id => id !== user.uid);
+                        await updateDoc(doc(db, 'sessions', session.id), { buddyIds: updatedBuddyIds });
+                      }
+                    } catch (e) {
+                      console.error("Failed to clean up buddyIds on countdown exit:", e);
+                    }
                     await deleteDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id));
                     localStorage.removeItem('active_session_code');
                     localStorage.removeItem('active_role');
@@ -2198,6 +2241,16 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
               if (buddy) {
                 const conf = window.confirm("Are you sure you want to leave the lobby?");
                 if (!conf) return;
+                try {
+                  const sessionSnap = await getDoc(doc(db, 'sessions', session.id));
+                  if (sessionSnap.exists()) {
+                    const currentBuddyIds: string[] = sessionSnap.data().buddyIds || [];
+                    const updatedBuddyIds = currentBuddyIds.filter(id => id !== user.uid);
+                    await updateDoc(doc(db, 'sessions', session.id), { buddyIds: updatedBuddyIds });
+                  }
+                } catch (e) {
+                  console.error("Failed to clean up buddyIds on exit:", e);
+                }
                 await deleteDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id));
                 localStorage.removeItem('active_session_code');
                 localStorage.removeItem('active_role');
