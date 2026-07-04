@@ -1839,7 +1839,7 @@ const SecurityOverlay: React.FC<OverlayProps> = ({
             <span className="text-[7px] opacity-50 text-gray-400 w-6">VRF</span>
             <div className="flex-1 h-0.5 bg-white/10 rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full transition-all duration-300"
+                className="h-full rounded-full transition duration-300"
                 style={{
                   width: `${verificationScore * 100}%`,
                   background: verificationScore >= SCORE_LOCK_THRESHOLD
@@ -1856,7 +1856,7 @@ const SecurityOverlay: React.FC<OverlayProps> = ({
             <span className="text-[7px] opacity-50 text-gray-400 w-6">LVN</span>
             <div className="flex-1 h-0.5 bg-white/10 rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full transition-all duration-300"
+                className="h-full rounded-full transition duration-300"
                 style={{
                   width: `${livenessScore * 100}%`,
                   background: livenessScore >= 0.8 ? col : '#ff9500',
@@ -1882,7 +1882,7 @@ const SecurityOverlay: React.FC<OverlayProps> = ({
 
       {/* ── Biometric multi-layer sub-scores (HUD) ── */}
       {livenessLayers && !ghostMode && (
-        <div className="absolute top-12 left-3 flex flex-col gap-1 opacity-85 pointer-events-none transition-all">
+        <div className="absolute top-12 left-3 flex flex-col gap-1 opacity-85 pointer-events-none transition">
           {Object.entries(livenessLayers).map(([layerName, score]) => {
             const shortNames: Record<string, string> = {
               temporalBlink: 'TMP-BLK',
@@ -2020,7 +2020,7 @@ const FaceSecurityEngine = forwardRef<FaceSecurityEngineRef, FaceSecurityEngineP
           <div className="absolute top-3 left-3 right-3">
             <div className="h-0.5 w-full bg-white/10 rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full transition-all duration-200"
+                className="h-full rounded-full transition duration-200"
                 style={{
                   width: `${registrationProgress}%`,
                   background: '#00d4ff',

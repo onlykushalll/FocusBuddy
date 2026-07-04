@@ -21,7 +21,7 @@ export default function SplashScreenPreview({ onComplete }: { onComplete: () => 
           initial={{ scale: 0.5, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: "spring", damping: 12, stiffness: 100 }}
-          className="w-24 h-24 bg-gradient-to-br from-[#707A3E] to-[#555D2F] rounded-[2.5rem] flex items-center justify-center mb-8 shadow-2xl shadow-[#707A3E]/40"
+          className="w-24 h-24 bg-gradient-to-br from-[#707A3E] to-[#555D2F] rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-[#707A3E]/40"
         >
           <Shield className="w-12 h-12 text-white" />
         </motion.div>

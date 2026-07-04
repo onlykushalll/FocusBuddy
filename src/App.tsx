@@ -250,8 +250,8 @@ function FaceRegistration({ onComplete, onCancel }: { onComplete: (descriptor: s
   const engineRef = useRef<FaceSecurityEngineRef>(null);
 
   return (
-    <div className="fixed inset-0 z-[200] bg-white dark:bg-black flex flex-col items-center justify-center p-6 backdrop-blur-md">
-      <div className="relative w-full max-w-sm aspect-[4/3] rounded-[2.5rem] overflow-hidden border-4 border-[#707A3E]/30 shadow-2xl shadow-[#707A3E]/20 bg-black">
+    <div className="fixed inset-0 z-[200] bg-[#FDFBF0] dark:bg-black flex flex-col items-center justify-center p-6 backdrop-blur-md">
+      <div className="relative w-full max-w-sm aspect-[4/3] rounded-3xl overflow-hidden border-4 border-[#707A3E]/30 shadow-2xl shadow-[#707A3E]/20 bg-black">
         <FaceSecurityEngine 
           ref={engineRef}
           isSessionActive={false}
@@ -444,7 +444,7 @@ export default function App() {
             <motion.button 
               whileTap={{ scale: 0.9 }}
               onClick={toggleDarkMode}
-              className="p-2.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl text-[#707A3E] dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-all shadow-sm"
+              className="p-2.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl text-[#707A3E] dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition shadow-sm"
               aria-label="Toggle Theme"
             >
               {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
@@ -452,7 +452,7 @@ export default function App() {
             <motion.button 
               whileTap={{ scale: 0.9 }}
               onClick={() => setView('about')}
-              className="p-2.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl text-[#707A3E] dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-all shadow-sm"
+              className="p-2.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl text-[#707A3E] dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition shadow-sm"
               aria-label="Help"
             >
               <HelpCircle className="w-5 h-5" />
@@ -492,7 +492,7 @@ export default function App() {
                 {error && (
                   <button 
                     onClick={() => window.location.reload()}
-                    className="px-8 py-3 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl font-medium hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-all shadow-sm"
+                    className="px-8 py-3 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl font-medium hover:bg-neutral-50 dark:hover:bg-neutral-800 transition shadow-sm"
                   >
                     Retry Connection
                   </button>
@@ -540,7 +540,7 @@ function HomeScreen({ onSelectRole }: { onSelectRole: (role: Role) => void, key?
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: "spring", damping: 15 }}
-        className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-[#707A3E] to-[#555D2F] rounded-[1.5rem] flex items-center justify-center mb-6 shadow-2xl shadow-[#707A3E]/30"
+        className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-[#707A3E] to-[#555D2F] rounded-3xl flex items-center justify-center mb-6 shadow-2xl shadow-[#707A3E]/30"
       >
         <Shield className="w-8 h-8 sm:w-10 sm:h-10 text-white" />
       </motion.div>
@@ -556,7 +556,7 @@ function HomeScreen({ onSelectRole }: { onSelectRole: (role: Role) => void, key?
           whileHover={{ y: -2 }}
           whileTap={{ scale: 0.98 }}
           onClick={() => onSelectRole('ADMIN')}
-          className="group relative overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 rounded-[1.5rem] text-left transition-all hover:border-[#707A3E]/50 shadow-sm hover:shadow-lg"
+          className="group relative overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 rounded-3xl text-left transition hover:border-[#707A3E]/50 shadow-sm hover:shadow-lg"
         >
           <div className="flex items-center justify-between mb-3">
             <div className="p-2.5 bg-[#707A3E]/10 rounded-xl text-[#707A3E]">
@@ -572,7 +572,7 @@ function HomeScreen({ onSelectRole }: { onSelectRole: (role: Role) => void, key?
           whileHover={{ y: -2 }}
           whileTap={{ scale: 0.98 }}
           onClick={() => onSelectRole('BUDDY')}
-          className="group relative overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 rounded-[1.5rem] text-left transition-all hover:border-[#707A3E]/50 shadow-sm hover:shadow-lg"
+          className="group relative overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-5 rounded-3xl text-left transition hover:border-[#707A3E]/50 shadow-sm hover:shadow-lg"
         >
           <div className="flex items-center justify-between mb-3">
             <div className="p-2.5 bg-[#707A3E]/10 rounded-xl text-[#707A3E]">
@@ -764,7 +764,7 @@ function AppListModal({ buddy, session, onClose }: { buddy: Buddy, session: Sess
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center px-6">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-      <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative w-full max-w-lg bg-white dark:bg-neutral-900 p-6 rounded-[2.5rem] flex flex-col max-h-[85vh] shadow-2xl overflow-hidden">
+      <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative w-full max-w-lg bg-white dark:bg-neutral-900 p-6 rounded-3xl flex flex-col max-h-[85vh] shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-black tracking-tight">{buddy.name}'s Apps</h3>
           <button onClick={onClose} className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full transition-colors">
@@ -778,7 +778,7 @@ function AppListModal({ buddy, session, onClose }: { buddy: Buddy, session: Sess
             placeholder="Search installed apps..." 
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full bg-neutral-100 dark:bg-neutral-800 border-none rounded-2xl py-4 pl-12 pr-4 text-sm font-bold placeholder:text-neutral-400 focus:ring-2 focus:ring-[#707A3E]/30 transition-all"
+            className="w-full bg-neutral-100 dark:bg-neutral-800 border-none rounded-2xl py-4 pl-12 pr-4 text-sm font-bold placeholder:text-neutral-400 focus:ring-2 focus:ring-[#707A3E]/30 transition"
           />
           <div className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400">
             <Plus className="w-5 h-5" />
@@ -791,7 +791,7 @@ function AppListModal({ buddy, session, onClose }: { buddy: Buddy, session: Sess
           ) : (
             filteredApps.map(app => (
               <div key={app.packageName} className={cn(
-                "flex items-center justify-between p-3 rounded-2xl border transition-all",
+                "flex items-center justify-between p-3 rounded-2xl border transition",
                 buddy.whitelistedApps.includes(app.packageName) 
                   ? "bg-[#707A3E]/5 border-[#707A3E]/20" 
                   : "bg-white dark:bg-neutral-900 border-neutral-100 dark:border-neutral-800"
@@ -812,7 +812,7 @@ function AppListModal({ buddy, session, onClose }: { buddy: Buddy, session: Sess
                 <button 
                   onClick={() => toggleApp(app.packageName)}
                   className={cn(
-                    "px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all",
+                    "px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition",
                     buddy.whitelistedApps.includes(app.packageName)
                       ? "bg-[#707A3E] text-white shadow-lg shadow-[#707A3E]/20"
                       : "bg-neutral-100 dark:bg-neutral-800 text-neutral-500 hover:bg-neutral-200"
@@ -1220,7 +1220,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
   if (isEnded) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#FDFBF0] dark:bg-neutral-950">
-        <div className="w-20 h-20 bg-green-500 rounded-[2rem] flex items-center justify-center mb-6 shadow-2xl shadow-green-500/20">
+        <div className="w-20 h-20 bg-green-500 rounded-3xl flex items-center justify-center mb-6 shadow-2xl shadow-green-500/20">
           <CheckCircle2 className="w-10 h-10 text-white" />
         </div>
         <h2 className="text-3xl font-black mb-3">Session Ended</h2>
@@ -1279,7 +1279,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
               </motion.div>
             )}
 
-            <div className="flex flex-col items-center justify-center py-12 border-2 border-dashed border-neutral-200 dark:border-neutral-800 rounded-[2rem] px-4 text-center">
+            <div className="flex flex-col items-center justify-center py-12 border-2 border-dashed border-neutral-200 dark:border-neutral-800 rounded-3xl px-4 text-center">
               <div className="w-12 h-12 bg-neutral-100 dark:bg-neutral-800 rounded-2xl flex items-center justify-center mb-4">
                 <Plus className="w-6 h-6 text-neutral-400" />
               </div>
@@ -1287,7 +1287,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
               <motion.button 
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setCreating(true)}
-                className="w-full max-w-[200px] bg-[#707A3E] hover:bg-[#555D2F] text-white py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all shadow-lg shadow-[#707A3E]/20"
+                className="w-full max-w-[200px] bg-[#707A3E] hover:bg-[#555D2F] text-white py-3 rounded-xl font-black uppercase tracking-widest text-[10px] transition shadow-lg shadow-[#707A3E]/20"
               >
                 Create Session
               </motion.button>
@@ -1296,7 +1296,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
         ) : (
           <div className="space-y-6">
             {/* Session Header */}
-            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-6 rounded-[2rem] flex flex-col items-center text-center gap-4 shadow-sm">
+            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-6 rounded-3xl flex flex-col items-center text-center gap-4 shadow-sm">
               <div>
                 <div className="text-neutral-400 text-[8px] uppercase tracking-[0.2em] font-bold mb-1">Session Code</div>
                 <div className="flex items-center gap-3">
@@ -1366,7 +1366,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                           countdownEndsAt: null 
                         });
                       }}
-                      className="w-full flex items-center justify-center gap-2 bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 py-3 rounded-xl font-bold uppercase tracking-widest text-[9px] transition-all"
+                      className="w-full flex items-center justify-center gap-2 bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-800 dark:text-neutral-200 py-3 rounded-xl font-bold uppercase tracking-widest text-[9px] transition"
                     >
                       Cancel Countdown
                     </motion.button>
@@ -1378,7 +1378,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                         whileTap={{ scale: 0.95 }}
                         onClick={startSession}
                         disabled={buddies.length === 0 || buddies.some(b => b.status !== 'approved' || !b.faceImage)}
-                        className="w-full flex items-center justify-center gap-2 bg-[#707A3E] hover:bg-[#555D2F] disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all shadow-lg shadow-[#707A3E]/20"
+                        className="w-full flex items-center justify-center gap-2 bg-[#707A3E] hover:bg-[#555D2F] disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition shadow-lg shadow-[#707A3E]/20"
                       >
                         <Play className="w-4 h-4" /> Start Session
                       </motion.button>
@@ -1398,7 +1398,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                             focusActive: false,
                             pausedAt: serverTimestamp()
                           })}
-                          className="flex-1 flex items-center justify-center gap-2 bg-yellow-500 hover:bg-yellow-600 text-white py-3.5 rounded-2xl font-bold transition-all text-xs shadow-lg shadow-yellow-500/20"
+                          className="flex-1 flex items-center justify-center gap-2 bg-yellow-500 hover:bg-yellow-600 text-white py-3.5 rounded-2xl font-bold transition text-xs shadow-lg shadow-yellow-500/20"
                         >
                           <Pause className="w-4 h-4" /> Pause
                         </motion.button>
@@ -1425,7 +1425,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                               console.error("Resume failed:", err);
                             }
                           }}
-                          className="flex-1 flex items-center justify-center gap-2 bg-[#707A3E] hover:bg-[#555D2F] text-white py-3.5 rounded-2xl font-bold transition-all text-xs shadow-lg shadow-[#707A3E]/20"
+                          className="flex-1 flex items-center justify-center gap-2 bg-[#707A3E] hover:bg-[#555D2F] text-white py-3.5 rounded-2xl font-bold transition text-xs shadow-lg shadow-[#707A3E]/20"
                         >
                           <Play className="w-4 h-4" /> Resume
                         </motion.button>
@@ -1434,7 +1434,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                         <motion.button 
                           whileTap={{ scale: 0.95 }}
                           onClick={stopSession}
-                          className="flex-1 flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white py-3.5 rounded-2xl font-bold transition-all text-xs shadow-lg shadow-red-500/20"
+                          className="flex-1 flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white py-3.5 rounded-2xl font-bold transition text-xs shadow-lg shadow-red-500/20"
                         >
                           <Square className="w-4 h-4" /> Stop
                         </motion.button>
@@ -1456,7 +1456,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
               
               <div className="grid grid-cols-1 gap-3">
                 {buddies.map(buddy => (
-                  <div key={buddy.id} className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-4 rounded-[1.5rem] shadow-sm">
+                  <div key={buddy.id} className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-4 rounded-3xl shadow-sm">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-[#707A3E]/10 rounded-xl flex items-center justify-center text-[#707A3E]">
@@ -1567,7 +1567,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                           whileTap={{ scale: 0.95 }}
                           disabled={!buddy.faceImage}
                           onClick={() => approveBuddy(buddy.id)}
-                          className="flex-1 bg-[#707A3E] disabled:opacity-30 text-white py-2.5 rounded-xl font-black uppercase tracking-widest text-[9px] shadow-sm active:scale-95 transition-all"
+                          className="flex-1 bg-[#707A3E] disabled:opacity-30 text-white py-2.5 rounded-xl font-black uppercase tracking-widest text-[9px] shadow-sm active:scale-95 transition"
                         >
                           Approve
                         </motion.button>
@@ -1588,14 +1588,14 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                   <div className="flex gap-2 mt-auto">
                     <button 
                       onClick={() => setSelectedBuddyId(buddy.id)}
-                      className="flex-1 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-sm"
+                      className="flex-1 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition flex items-center justify-center gap-2 shadow-sm"
                     >
                       <Lock className="w-3 h-3" /> Manage Apps
                     </button>
                     {buddy.status === 'approved' && (
                        <button 
                         onClick={() => removeBuddy(buddy.id)}
-                        className="p-3 bg-red-500/5 text-red-500/40 hover:text-red-500 border border-transparent hover:border-red-500/20 rounded-xl transition-all"
+                        className="p-3 bg-red-500/5 text-red-500/40 hover:text-red-500 border border-transparent hover:border-red-500/20 rounded-xl transition"
                       >
                          <UserX className="w-4 h-4" />
                        </button>
@@ -1604,7 +1604,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                 </div>
               ))}
                 {buddies.length === 0 && (
-                  <div className="py-8 text-center border-2 border-dashed border-neutral-100 dark:border-neutral-900 rounded-[1.5rem]">
+                  <div className="py-8 text-center border-2 border-dashed border-neutral-100 dark:border-neutral-900 rounded-3xl">
                     <p className="text-xs font-bold text-neutral-400 uppercase tracking-widest">Waiting for buddies...</p>
                   </div>
                 )}
@@ -1638,7 +1638,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-8 rounded-[2.5rem] shadow-2xl"
+              className="relative w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-8 rounded-3xl shadow-2xl"
             >
               <h3 className="text-2xl font-black mb-6 tracking-tight">Session Duration</h3>
               <div className="grid grid-cols-2 gap-3 mb-8">
@@ -1648,7 +1648,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                     whileTap={{ scale: 0.95 }}
                     onClick={() => { setDuration(m); setCustomDuration(''); }}
                     className={cn(
-                      "p-5 rounded-[1.5rem] border transition-all text-center group",
+                      "p-5 rounded-3xl border transition text-center group",
                       duration === m && !customDuration ? "border-[#707A3E] bg-[#707A3E]/10 text-[#707A3E]" : "border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 text-neutral-500 dark:text-neutral-400 hover:border-neutral-300 dark:hover:border-neutral-700 shadow-sm"
                     )}
                   >
@@ -1664,13 +1664,13 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                   value={customDuration}
                   onChange={(e) => setCustomDuration(e.target.value)}
                   placeholder="Enter minutes..."
-                  className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-2xl px-5 py-4 focus:outline-none focus:border-[#707A3E] transition-all text-neutral-900 dark:text-white font-bold shadow-sm"
+                  className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-2xl px-5 py-4 focus:outline-none focus:border-[#707A3E] transition text-neutral-900 dark:text-white font-bold shadow-sm"
                 />
               </div>
               <motion.button 
                 whileTap={{ scale: 0.95 }}
                 onClick={createSession}
-                className="w-full bg-[#707A3E] hover:bg-[#555D2F] text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-lg shadow-[#707A3E]/20"
+                className="w-full bg-[#707A3E] hover:bg-[#555D2F] text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs transition shadow-lg shadow-[#707A3E]/20"
               >
                 Confirm & Create
               </motion.button>
@@ -1693,7 +1693,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-8 rounded-[2.5rem] shadow-2xl z-10"
+              className="relative w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-8 rounded-3xl shadow-2xl z-10"
             >
               <h3 className="text-xl font-black mb-4 tracking-tight">Reject Face Registration</h3>
               <p className="text-sm text-neutral-500 mb-6 font-medium">
@@ -1713,7 +1713,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                     key={reason}
                     onClick={() => setRejectReason(reason)}
                     className={cn(
-                      "w-full text-left p-3 rounded-xl border transition-all text-xs font-semibold",
+                      "w-full text-left p-3 rounded-xl border transition text-xs font-semibold",
                       rejectReason === reason
                         ? "border-red-500 bg-red-500/10 text-red-600"
                         : "border-neutral-200 dark:border-neutral-800 text-neutral-600 dark:text-neutral-400"
@@ -1769,7 +1769,7 @@ function AboutView({ onBack }: { onBack: () => void }) {
           <motion.button 
             whileTap={{ scale: 0.9 }}
             onClick={onBack} 
-            className="p-2.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl transition-all shadow-sm"
+            className="p-2.5 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl transition shadow-sm"
           >
             <ArrowLeft className="w-6 h-6 text-[#707A3E]" />
           </motion.button>
@@ -1777,7 +1777,7 @@ function AboutView({ onBack }: { onBack: () => void }) {
         </div>
 
         <div className="space-y-6">
-          <div className="p-8 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-[2rem] shadow-sm">
+          <div className="p-8 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-3xl shadow-sm">
             <div className="flex items-center gap-4 mb-6">
               <div className="p-3 bg-[#707A3E]/10 rounded-2xl text-[#707A3E]">
                 <Info className="w-6 h-6" />
@@ -2184,7 +2184,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
     if (session.status === 'ended') {
       return (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#FDFBF0] dark:bg-neutral-950">
-          <div className="w-20 h-20 bg-red-500/10 rounded-[2rem] flex items-center justify-center mb-6 text-red-500 border border-red-500/20 shadow-xl shadow-red-500/10">
+          <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center mb-6 text-red-500 border border-red-500/20 shadow-xl shadow-red-500/10">
             <XCircle className="w-10 h-10" />
           </div>
           <h2 className="text-3xl font-black mb-4 tracking-tight">Session Ended</h2>
@@ -2200,7 +2200,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
               setBuddy(null);
               onBack();
             }}
-            className="bg-[#707A3E] text-white px-12 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-[#707A3E]/30 active:scale-95 transition-all"
+            className="bg-[#707A3E] text-white px-12 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-[#707A3E]/30 active:scale-95 transition"
           >
             Back to Home
           </motion.button>
@@ -2213,7 +2213,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
     if (buddy.status === 'rejected') {
       return (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#FDFBF0] dark:bg-neutral-950 min-h-screen">
-          <div className="w-20 h-20 bg-red-500/10 rounded-[2rem] flex items-center justify-center mb-6 text-red-500 border border-red-500/20 shadow-xl shadow-red-500/10">
+          <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center mb-6 text-red-500 border border-red-500/20 shadow-xl shadow-red-500/10">
             <XCircle className="w-10 h-10" />
           </div>
           <h2 className="text-3xl font-black mb-4 tracking-tight">Face Registration Rejected</h2>
@@ -2233,7 +2233,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
           <motion.button
             whileTap={{ scale: 0.95 }}
             onClick={() => setShowFaceReg(true)}
-            className="bg-[#707A3E] text-white px-12 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-[#707A3E]/30 active:scale-95 transition-all w-full max-w-xs"
+            className="bg-[#707A3E] text-white px-12 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-[#707A3E]/30 active:scale-95 transition w-full max-w-xs"
           >
             Re-register Face
           </motion.button>
@@ -2247,7 +2247,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
       if (!buddy.faceImage) {
         return (
           <div className="fixed inset-0 z-[150] bg-[#FDFBF0] dark:bg-neutral-950 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-20 h-20 bg-yellow-500/10 rounded-[2rem] flex items-center justify-center mb-6 text-yellow-500 border border-yellow-500/20 shadow-xl shadow-yellow-500/10">
+            <div className="w-20 h-20 bg-yellow-500/10 rounded-3xl flex items-center justify-center mb-6 text-yellow-500 border border-yellow-500/20 shadow-xl shadow-yellow-500/10">
               <Camera className="w-10 h-10" />
             </div>
             <h2 className="text-3xl font-black mb-4 tracking-tight">Identity Required</h2>
@@ -2257,7 +2257,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
             <motion.button 
               whileTap={{ scale: 0.95 }}
               onClick={() => setShowFaceReg(true)}
-              className="bg-[#707A3E] text-white px-12 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-[#707A3E]/30 active:scale-95 transition-all w-full max-w-xs"
+              className="bg-[#707A3E] text-white px-12 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-[#707A3E]/30 active:scale-95 transition w-full max-w-xs"
             >
               Register Now
             </motion.button>
@@ -2308,7 +2308,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
                     setBuddy(null);
                   }
                 }}
-                className="px-8 py-3 border border-white/20 hover:bg-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                className="px-8 py-3 border border-white/20 hover:bg-white/5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition"
               >
                 Leave Session
               </motion.button>
@@ -2352,7 +2352,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-6">
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-6 rounded-[2rem] space-y-6 shadow-sm">
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 p-6 rounded-3xl space-y-6 shadow-sm">
             <div className="p-4 bg-[#707A3E]/5 border border-[#707A3E]/10 rounded-2xl">
               <div className="text-[8px] text-[#707A3E] font-black uppercase tracking-widest mb-1">Device Status</div>
               <div className="text-[10px] text-neutral-500 dark:text-neutral-400 font-medium">Waiting for admin approval. Face registration is MANDATORY to proceed.</div>
@@ -2391,7 +2391,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
                 <motion.button 
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setShowFaceReg(true)}
-                  className="w-full flex items-center justify-center gap-2 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                  className="w-full flex items-center justify-center gap-2 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition"
                 >
                   <Camera className="w-4 h-4" /> Register Face
                 </motion.button>
@@ -2457,7 +2457,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Enter your name..."
-            className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl px-4 sm:px-6 py-3 sm:py-4 focus:outline-none focus:border-[#707A3E] transition-all text-sm sm:text-base shadow-sm"
+            className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl px-4 sm:px-6 py-3 sm:py-4 focus:outline-none focus:border-[#707A3E] transition text-sm sm:text-base shadow-sm"
           />
         </div>
 
@@ -2469,7 +2469,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
             value={sessionCode}
             onChange={(e) => setSessionCode(e.target.value.replace(/\D/g, ''))}
             placeholder="000000"
-            className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-center text-2xl sm:text-3xl font-mono font-bold tracking-[0.3em] sm:tracking-[0.5em] focus:outline-none focus:border-[#707A3E] transition-all placeholder:text-neutral-200 dark:placeholder:text-neutral-800 shadow-sm"
+            className="w-full bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-center text-2xl sm:text-3xl font-mono font-bold tracking-[0.3em] sm:tracking-[0.5em] focus:outline-none focus:border-[#707A3E] transition placeholder:text-neutral-200 dark:placeholder:text-neutral-800 shadow-sm"
           />
         </div>
 
@@ -2483,7 +2483,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
         <button 
           onClick={joinSession}
           disabled={joining}
-          className="w-full bg-[#707A3E] hover:bg-[#555D2F] disabled:opacity-50 text-white py-4 rounded-2xl font-bold transition-all shadow-lg shadow-[#707A3E]/20"
+          className="w-full bg-[#707A3E] hover:bg-[#555D2F] disabled:opacity-50 text-white py-4 rounded-2xl font-bold transition shadow-lg shadow-[#707A3E]/20"
         >
           {joining ? 'Connecting...' : 'Join Session'}
         </button>
@@ -2658,12 +2658,12 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
       <div className="fixed inset-0 opacity-[0.01] pointer-events-none dark:opacity-[0.03]" style={{ backgroundImage: `radial-gradient(#707A3E 1px, transparent 1px)`, backgroundSize: '40px 40px' }} />
       
       {(!screenOn || (buddy.pausedByFace && !isEnded) || buddy.securityAlert === 'SUSPECTED_SPOOF') && (
-        <div className="absolute inset-0 z-[110] bg-white/95 dark:bg-neutral-950/95 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center">
+        <div className="absolute inset-0 z-[110] bg-[#FDFBF0]/95 dark:bg-neutral-950/95 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center">
           <motion.div 
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className={cn(
-              "w-20 h-20 rounded-[1.5rem] flex items-center justify-center mb-6 border shadow-2xl",
+              "w-20 h-20 rounded-3xl flex items-center justify-center mb-6 border shadow-2xl",
               buddy.securityAlert === 'SUSPECTED_SPOOF' 
                 ? "bg-red-500/20 border-red-500/30 shadow-red-500/20" 
                 : "bg-yellow-500/20 border-yellow-500/30 shadow-yellow-500/20"
@@ -2701,11 +2701,11 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
       )}
 
       {isPaused && !buddy.pausedByFace && !isEnded && (
-        <div className="absolute inset-0 z-[115] bg-white/95 dark:bg-neutral-950/95 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center">
+        <div className="absolute inset-0 z-[115] bg-[#FDFBF0]/95 dark:bg-neutral-950/95 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center">
           <motion.div 
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="w-20 h-20 bg-[#707A3E]/10 rounded-[1.5rem] flex items-center justify-center mb-6 border border-[#707A3E]/20 shadow-2xl shadow-[#707A3E]/10"
+            className="w-20 h-20 bg-[#707A3E]/10 rounded-3xl flex items-center justify-center mb-6 border border-[#707A3E]/20 shadow-2xl shadow-[#707A3E]/10"
           >
             <Pause className="w-10 h-10 text-[#707A3E]" />
           </motion.div>
@@ -2730,7 +2730,7 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
           animate={{ scale: 1, opacity: 1 }}
           className="flex-1 flex flex-col items-center justify-center space-y-6"
         >
-          <div className="w-20 h-20 bg-gradient-to-br from-green-500 to-green-600 rounded-[1.5rem] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-green-500/30">
+          <div className="w-20 h-20 bg-gradient-to-br from-green-500 to-green-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-green-500/30">
             <Check className="w-10 h-10 text-white" />
           </div>
           <h2 className="text-3xl font-black text-neutral-900 dark:text-white tracking-tight">Congrats!</h2>
@@ -2739,7 +2739,7 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
           <motion.button 
             whileTap={{ scale: 0.95 }}
             onClick={() => window.location.reload()}
-            className="mt-8 px-10 py-3.5 bg-[#707A3E] text-white rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all shadow-lg shadow-[#707A3E]/20"
+            className="mt-8 px-10 py-3.5 bg-[#707A3E] text-white rounded-2xl font-black uppercase tracking-widest text-[10px] transition shadow-lg shadow-[#707A3E]/20"
           >
             Exit Focus Mode
           </motion.button>
@@ -2803,7 +2803,7 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
                   className="flex flex-col items-center gap-2.5 group animate-fade-in"
                 >
                   <div 
-                    className="w-[60px] h-[60px] rounded-[18px] flex items-center justify-center overflow-hidden transition-all duration-200 group-active:scale-95"
+                    className="w-[60px] h-[60px] rounded-2xl flex items-center justify-center overflow-hidden transition duration-200 group-active:scale-95"
                     style={{
                       background: darkMode 
                         ? 'rgba(255,255,255,0.08)' 
@@ -2855,7 +2855,7 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
                   }
                 }}
                 className={cn(
-                  "flex-1 py-3.5 rounded-2xl font-bold text-[10px] uppercase tracking-[0.2em] transition-all",
+                  "flex-1 py-3.5 rounded-2xl font-bold text-[10px] uppercase tracking-[0.2em] transition",
                   stopRequested 
                     ? "bg-neutral-100 dark:bg-neutral-900 text-neutral-400 cursor-not-allowed"
                     : "bg-white dark:bg-neutral-900 text-neutral-500 border border-neutral-200 dark:border-neutral-800 hover:border-red-200 hover:text-red-500 shadow-sm"
@@ -2876,7 +2876,7 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
                   }
                 }}
                 className={cn(
-                  "flex-1 py-3.5 rounded-2xl font-bold text-[10px] uppercase tracking-[0.2em] transition-all",
+                  "flex-1 py-3.5 rounded-2xl font-bold text-[10px] uppercase tracking-[0.2em] transition",
                   pauseRequested
                     ? "bg-neutral-100 dark:bg-neutral-900 text-neutral-400 cursor-not-allowed"
                     : "bg-white dark:bg-neutral-900 text-neutral-500 border border-neutral-200 dark:border-neutral-800 hover:border-yellow-200 hover:text-yellow-600 shadow-sm"

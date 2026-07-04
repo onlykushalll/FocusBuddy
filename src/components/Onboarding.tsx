@@ -76,7 +76,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
         {STEPS.map((_, i) => (
           <div 
             key={i}
-            className={`h-1.5 rounded-full transition-all duration-300 ${i === currentStep ? 'w-8' : 'w-2'}`}
+            className={`h-1.5 rounded-full transition duration-300 ${i === currentStep ? 'w-8' : 'w-2'}`}
             style={{ backgroundColor: i === currentStep ? STEPS[currentStep].color : '#E5E5E5' }}
           />
         ))}
@@ -84,7 +84,7 @@ export default function Onboarding({ onComplete }: { onComplete: () => void }) {
 
       <button 
         onClick={next}
-        className="w-full max-w-xs py-4 rounded-2xl font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2"
+        className="w-full max-w-xs py-4 rounded-2xl font-bold text-white shadow-lg transition flex items-center justify-center gap-2"
         style={{ backgroundColor: STEPS[currentStep].color }}
       >
         {currentStep === STEPS.length - 1 ? "Get Started" : "Next"}
