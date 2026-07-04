@@ -3,8 +3,6 @@ package com.focusbuddy
 import android.app.Application
 import android.content.Intent
 import com.google.firebase.FirebaseApp
-import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 
 /**
  * FocusBuddyApp: UPGRADED Core Application Entry.
@@ -13,12 +11,6 @@ class FocusBuddyApp : Application() {
     override fun onCreate() {
         super.onCreate()
         FirebaseApp.initializeApp(this)
-
-        // Configure Firebase App Check with Play Integrity
-        val firebaseAppCheck = FirebaseAppCheck.getInstance()
-        firebaseAppCheck.installAppCheckProviderFactory(
-            PlayIntegrityAppCheckProviderFactory.getInstance()
-        )
 
         GlobalState.init(this)
 

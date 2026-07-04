@@ -21,6 +21,8 @@ import androidx.lifecycle.LifecycleRegistry
 import com.focusbuddy.GlobalState
 import com.focusbuddy.MainActivity
 import com.focusbuddy.security.SecurityChecker
+import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
@@ -38,13 +40,14 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
         
         const val ACTION_START_CAMERA = "ACTION_START_CAMERA"
         const val ACTION_STOP_CAMERA = "ACTION_STOP_CAMERA"
+        private const val FIRESTORE_DATABASE_ID = "ai-studio-10e8e10d-0a5d-41e8-bcfd-bc75e9b69bf3"
     }
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = lifecycleRegistry
 
     private val handler = Handler(Looper.getMainLooper())
-    private val db = FirebaseFirestore.getInstance()
+    private val db = FirebaseFirestore.getInstance(FirebaseApp.getInstance(), FIRESTORE_DATABASE_ID)
     private val sessionIdRef = AtomicReference<String?>(null)
     private val buddyIdRef = AtomicReference<String?>(null)
 
@@ -181,6 +184,10 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
         if (!GlobalState.isSessionActive) return
         val sessionId = sessionIdRef.get() ?: return
         val buddyId = buddyIdRef.get() ?: return
+        if (FirebaseAuth.getInstance().currentUser == null) {
+            Log.w(TAG, "Skipping face-violation report — native auth not ready yet")
+            return
+        }
 
         val updates = hashMapOf<String, Any>()
 
@@ -190,20 +197,20 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
             faceCount == 0 -> {
                 updates["pausedByFace"] = false
                 updates["lastFaceMatch"] = true  // don't trigger pause
-                updates["securityAlert"] = "CAMERA_BLOCKED_OR_NO_FACE"
+                updates["nativeAlert"] = "CAMERA_BLOCKED_OR_NO_FACE"
             }
             // 1 face = possibly buddy, possibly stranger
             // Native ML Kit can't do identity matching — let the WebView
             // face engine decide. Don't touch pausedByFace here.
             faceCount == 1 -> {
-                updates["securityAlert"] = "NATIVE_FACE_CHECK_PENDING"
+                updates["nativeAlert"] = "NATIVE_FACE_CHECK_PENDING"
             }
             // >1 faces = buddy + stranger, or multiple strangers
             // LOCKED: timer runs, kiosk ON (buddy + stranger = locked per intent)
             faceCount > 1 -> {
                 updates["pausedByFace"] = false
                 updates["lastFaceMatch"] = true
-                updates["securityAlert"] = "MULTIPLE_FACES_DETECTED"
+                updates["nativeAlert"] = "MULTIPLE_FACES_DETECTED"
             }
         }
 
@@ -211,7 +218,7 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
             .collection("buddies").document(buddyId)
             .update(updates)
             .addOnSuccessListener {
-                Log.w(TAG, "Reported native face event: $faceCount faces → ${updates["securityAlert"]}")
+                Log.w(TAG, "Reported native face event: $faceCount faces → ${updates["nativeAlert"]}")
             }
             .addOnFailureListener { e ->
                 Log.e(TAG, "Failed to report native face event", e)
@@ -230,6 +237,10 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
         val buddyId = buddyIdRef.get()
         if (sessionId.isNullOrEmpty() || buddyId.isNullOrEmpty()) {
             Log.w(TAG, "Cannot perform security check: sessionId or buddyId is empty")
+            return
+        }
+        if (FirebaseAuth.getInstance().currentUser == null) {
+            Log.w(TAG, "Skipping security check report — native auth not ready yet")
             return
         }
 
@@ -264,12 +275,18 @@ class FaceAnalyzerService : Service(), LifecycleOwner {
 
         if (report.isRooted || report.isFridaPresent || report.isXposedPresent || 
             report.isAccessibilityDisabled || report.isSafeMode) {
+            // Force-end session locally
+            GlobalState.isSessionActive = false
+
             db.collection("sessions").document(sessionId)
                 .collection("buddies").document(buddyId)
-                .update("securityAlert", "CRITICAL_THREAT_DETECTED")
+                .update("nativeAlert", "CRITICAL_THREAT_DETECTED")
                 .addOnFailureListener { e ->
                     Log.e(TAG, "Failed to send critical alert", e)
                 }
+
+            // Local enforcement action: stop monitoring immediately
+            stopSelf()
         }
     }
 

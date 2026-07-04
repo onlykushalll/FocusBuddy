@@ -83,7 +83,7 @@ export interface FaceSecurityEngineProps {
   onMultipleFaces?: () => void;     // >1 face in frame
   onCameraBlocked?: () => void;     // total darkness
   onLivenessChallenge?: (type: LivenessChallenge) => void;
-  onRegistrationComplete?: (descriptorJson: string, faceSnapshot: string) => void;
+  onRegistrationComplete?: (descriptorJson: string, faceSnapshot: string, faceImages?: Record<string, string>) => void;
   onEngineError?: (err: string) => void;
   onSuspectedSpoof?: () => void;
 }
@@ -143,6 +143,9 @@ const BUDDY_MATCH_THRESHOLD  = 0.82;   // cosine similarity for identity
 const BUDDY_EUCLIDEAN_THRESHOLD = 0.25; // Euclidean distance for identity (closer is better)
 const MOTION_VAR_THRESHOLD   = 400;    // pixel variance → adaptive FPS trigger
 const REGISTRATION_SAMPLES   = 12;     // 4 center, 4 left, 4 right
+const POSE_HINT_AFTER_MS     = 6000;   // show an encouraging hint
+const POSE_RELAX_AFTER_MS    = 12000;  // start relaxing the yaw threshold
+const POSE_MIN_YAW           = 0.025;  // floor — still a real turn, just a smaller one
 // ─────────────────────────────────────────────────────────────────────────────
 // §2  GEOMETRY & DESCRIPTOR HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,6 +226,26 @@ function avgDescriptors(samples: number[][]): number[] {
   return out.map(v => v / samples.length);
 }
 
+/** Mirrored JPEG snapshot of the current video frame, or '' on failure.
+ *  Extracted from what used to be a single inline capture at the very end
+ *  of registration — now called once per pose stage. */
+function captureRegistrationSnapshot(video: HTMLVideoElement): string {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 320;
+    canvas.height = video.videoHeight || 240;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } catch (e) {
+    console.error('Failed to capture registration snapshot:', e);
+    return '';
+  }
+}
+
 /** Compute the yaw of a face relative to standard camera coordinate space */
 function getFaceYaw(kps: Kps): number {
   if (!kps[LM.NOSE_TIP] || !kps[LM.L_CHEEK] || !kps[LM.R_CHEEK]) return 0;
@@ -234,6 +257,22 @@ function getFaceYaw(kps: Kps): number {
 // ─────────────────────────────────────────────────────────────────────────────
 // §3  LIVENESS ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_LAYERS_SCORE: Record<string, number> = {
+  temporalBlink: 1.0,
+  poseChallenge: 1.0,
+  irisAsymmetry: 1.0,
+  rppgBloodFlow: 1.0,
+  depth3DGeometry: 1.0,
+  specularReflection: 1.0,
+  colorSpaceSkin: 1.0,
+  moireFrequency: 1.0,
+  histogramConsistency: 1.0,
+  attentionGaze: 1.0,
+  replayDetection: 1.0,
+  lbpTexture: 1.0,
+  boundaryDetection: 1.0,
+};
 
 class LivenessEngine {
   // Blink state
@@ -278,21 +317,7 @@ class LivenessEngine {
   private score = 1.0;
 
   // Diagnostics / details of each layer to show on HUD or debug
-  public layersScore: Record<string, number> = {
-    temporalBlink: 1.0,
-    poseChallenge: 1.0,
-    irisAsymmetry: 1.0,
-    rppgBloodFlow: 1.0,
-    depth3DGeometry: 1.0,
-    specularReflection: 1.0,
-    colorSpaceSkin: 1.0,
-    moireFrequency: 1.0,
-    histogramConsistency: 1.0,
-    attentionGaze: 1.0,
-    replayDetection: 1.0,
-    lbpTexture: 1.0,
-    boundaryDetection: 1.0,
-  };
+  public layersScore: Record<string, number> = { ...DEFAULT_LAYERS_SCORE };
 
   reset(): void {
     this.blinkCount = 0;
@@ -317,18 +342,7 @@ class LivenessEngine {
     this.lbpHistory = [];
     this.boundaryHistory = [];
 
-    this.layersScore = {
-      temporalBlink: 1.0,
-      poseChallenge: 1.0,
-      irisAsymmetry: 1.0,
-      rppgBloodFlow: 1.0,
-      depth3DGeometry: 1.0,
-      specularReflection: 1.0,
-      colorSpaceSkin: 1.0,
-      moireFrequency: 1.0,
-      histogramConsistency: 1.0,
-      attentionGaze: 1.0,
-    };
+    this.layersScore = { ...DEFAULT_LAYERS_SCORE };
   }
 
   /** Call once per detection frame with the landmarks of the primary face and video stream */
@@ -1081,6 +1095,9 @@ export function useFaceSecurityEngine(
   const prevStateRef      = useRef<SessionState>('IDLE');
   const registrationBuf   = useRef<number[][]>([]);
   const isRegistering     = useRef(false);
+  const registrationSnapshots = useRef<Record<string, string>>({});
+  const registrationStageRef      = useRef(-1);   // -1 forces the first-frame reset below
+  const registrationStageStartRef = useRef(0);
 
   // ── Load persisted descriptor ─────────────────────────────────────────────
 
@@ -1228,93 +1245,85 @@ export function useFaceSecurityEngine(
         if (desc) {
           const yaw = getFaceYaw(kps);
           const currentCount = registrationBuf.current.length;
-          
+          const stageIndex = currentCount < 4 ? 0 : currentCount < 8 ? 1 : 2;
+
+          // If stuck on the same stage for a while, progressively relax the
+          // required yaw magnitude instead of waiting indefinitely — someone
+          // with limited neck mobility, or a fixed-angle desktop webcam, can
+          // otherwise get stuck on the left/right stage with no way through.
+          if (registrationStageRef.current !== stageIndex) {
+            registrationStageRef.current = stageIndex;
+            registrationStageStartRef.current = Date.now();
+          }
+          const stageElapsedMs = Date.now() - registrationStageStartRef.current;
+          const relaxed = stageElapsedMs > POSE_RELAX_AFTER_MS;
+          const showHint = stageElapsedMs > POSE_HINT_AFTER_MS;
+          const yawThreshold = relaxed
+            ? Math.max(POSE_MIN_YAW, 0.06 - ((stageElapsedMs - POSE_RELAX_AFTER_MS) / 20000) * 0.035)
+            : 0.06;
+          const centerThreshold = relaxed ? 0.12 : 0.08;
+
           let validPose = false;
           let prompt = 'LOOK CENTER';
-          
+
           if (currentCount < 4) {
-            // Need Center pose
-            if (Math.abs(yaw) <= 0.08) {
-              validPose = true;
-            }
-            prompt = 'LOOK CENTER';
+            if (Math.abs(yaw) <= centerThreshold) validPose = true;
+            prompt = showHint ? 'LOOK CENTER — hold steady' : 'LOOK CENTER';
           } else if (currentCount < 8) {
-            // Need Left pose
-            if (yaw >= 0.06) {
-              validPose = true;
-            }
-            prompt = 'TURN SLIGHTLY LEFT';
+            if (yaw >= yawThreshold) validPose = true;
+            prompt = showHint ? "TURN SLIGHTLY LEFT — a little goes a long way" : 'TURN SLIGHTLY LEFT';
           } else {
-            // Need Right pose
-            if (yaw <= -0.06) {
-              validPose = true;
-            }
-            prompt = 'TURN SLIGHTLY RIGHT';
+            if (yaw <= -yawThreshold) validPose = true;
+            prompt = showHint ? "TURN SLIGHTLY RIGHT — a little goes a long way" : 'TURN SLIGHTLY RIGHT';
           }
-          
+
           if (validPose) {
             registrationBuf.current.push(desc);
-            const progress = Math.round(
-              (registrationBuf.current.length / REGISTRATION_SAMPLES) * 100
-            );
-            
-            // Recompute prompt for next frame
+            const progress = Math.round((registrationBuf.current.length / REGISTRATION_SAMPLES) * 100);
+
             const nextCount = registrationBuf.current.length;
             let nextPrompt = prompt;
-            if (nextCount >= 4 && nextCount < 8) {
-              nextPrompt = 'TURN SLIGHTLY LEFT';
-            } else if (nextCount >= 8 && nextCount < 12) {
-              nextPrompt = 'TURN SLIGHTLY RIGHT';
-            } else if (nextCount >= 12) {
-              nextPrompt = 'PROCESSING...';
+            if (nextCount >= 4 && nextCount < 8) nextPrompt = 'TURN SLIGHTLY LEFT';
+            else if (nextCount >= 8 && nextCount < 12) nextPrompt = 'TURN SLIGHTLY RIGHT';
+            else if (nextCount >= 12) nextPrompt = 'PROCESSING...';
+
+            setState(s => ({ ...s, registrationProgress: progress, registrationPrompt: nextPrompt }));
+
+            // Capture a snapshot at the end of each stage, not just once at the very
+            // end — previously the single stored "identity photo" was whatever frame
+            // happened to complete the RIGHT stage, i.e. the buddy mid-turn.
+            if (nextCount === 4 || nextCount === 8 || nextCount === 12) {
+              const poseKey = nextCount === 4 ? 'center' : nextCount === 8 ? 'left' : 'right';
+              const snap = captureRegistrationSnapshot(video);
+              if (snap) registrationSnapshots.current[poseKey] = snap;
             }
-            
-            setState(s => ({ 
-              ...s, 
-              registrationProgress: progress,
-              registrationPrompt: nextPrompt
-            }));
 
             if (registrationBuf.current.length >= REGISTRATION_SAMPLES) {
               const centerSamples = registrationBuf.current.slice(0, 4);
               const leftSamples = registrationBuf.current.slice(4, 8);
               const rightSamples = registrationBuf.current.slice(8, 12);
-              
-              const centerDesc = avgDescriptors(centerSamples);
-              const leftDesc = avgDescriptors(leftSamples);
-              const rightDesc = avgDescriptors(rightSamples);
-              
+
               const finalMultiPose: MultiPoseDescriptor = {
-                center: centerDesc,
-                left: leftDesc,
-                right: rightDesc
+                center: avgDescriptors(centerSamples),
+                left: avgDescriptors(leftSamples),
+                right: avgDescriptors(rightSamples),
               };
-              
+
               buddyDescRef.current = finalMultiPose;
               isRegistering.current = false;
               registrationBuf.current = [];
-              
-              let faceSnapshot = '';
-              try {
-                const snapCanvas = document.createElement('canvas');
-                snapCanvas.width = video.videoWidth || 320;
-                snapCanvas.height = video.videoHeight || 240;
-                const snapCtx = snapCanvas.getContext('2d');
-                if (snapCtx) {
-                  snapCtx.translate(snapCanvas.width, 0);
-                  snapCtx.scale(-1, 1);
-                  snapCtx.drawImage(video, 0, 0, snapCanvas.width, snapCanvas.height);
-                  faceSnapshot = snapCanvas.toDataURL('image/jpeg', 0.85);
-                }
-              } catch (e) {
-                console.error('Failed to capture registration snapshot:', e);
-              }
-              
-              onRegistrationComplete?.(JSON.stringify(finalMultiPose), faceSnapshot);
+
+              const faceImages = { ...registrationSnapshots.current };
+              registrationSnapshots.current = {};
+              // Primary display photo is the CENTER pose — facing the camera —
+              // rather than whatever the old single-capture grabbed (tail end of
+              // the RIGHT stage). Falls back to any captured pose if center failed.
+              const primarySnapshot = faceImages.center || faceImages.left || faceImages.right || '';
+
+              onRegistrationComplete?.(JSON.stringify(finalMultiPose), primarySnapshot, faceImages);
               _setSessionState('IDLE');
             }
           } else {
-            // Keep instructing the user
             setState(s => ({ ...s, registrationPrompt: prompt }));
           }
         }
@@ -1403,8 +1412,10 @@ export function useFaceSecurityEngine(
       if (buddyPresent) {
         // Buddy visible (alone or with others) → LOCKED
         if (sessionStateRef.current === 'PAUSED') onBuddyReturned?.();
-        _setSessionState('LOCKED');
-        _setFps(FPS_LOW);
+        if (sessionStateRef.current !== 'SUSPECTED_SPOOF') {
+          _setSessionState('LOCKED');
+          _setFps(FPS_LOW);
+        }
       } else {
         // No buddy, but ≥1 stranger → PAUSED
         if (sessionStateRef.current !== 'PAUSED') {
@@ -1629,6 +1640,9 @@ export function useFaceSecurityEngine(
 
   const startRegistration = useCallback(() => {
     registrationBuf.current  = [];
+    registrationSnapshots.current = {};
+    registrationStageRef.current = -1;
+    registrationStageStartRef.current = 0;
     isRegistering.current    = true;
     isRunningRef.current     = true;
     _setSessionState('REGISTERING');
@@ -1881,6 +1895,9 @@ const SecurityOverlay: React.FC<OverlayProps> = ({
               moireFrequency: 'MOI-GRD',
               histogramConsistency: 'HIST-C',
               attentionGaze: 'ATN-GZE',
+              replayDetection: 'REPLAY',
+              lbpTexture: 'LBP-TEX',
+              boundaryDetection: 'BOUND-D',
             };
             const label = shortNames[layerName] ?? layerName.toUpperCase().slice(0, 7);
             const scoreNum = score as number;

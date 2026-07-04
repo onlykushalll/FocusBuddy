@@ -70,6 +70,7 @@ declare global {
       stopFocusSession: (sessionToken: string) => void;
       updateWhitelist: (whitelistJson: string, sessionToken: string) => void;
       getSessionToken: () => string;
+      getNativeDeviceId: () => string;
       getInstalledApps: () => string; // Returns JSON string of AppInfo[]
       getAppIcon: (packageName: string) => string; // Returns Base64 string
       launchApp: (packageName: string, sessionToken: string) => void;
@@ -231,7 +232,7 @@ interface Buddy {
 
 // --- Components ---
 
-function FaceRegistration({ onComplete, onCancel }: { onComplete: (descriptor: string, faceSnapshot: string) => void, onCancel: () => void }) {
+function FaceRegistration({ onComplete, onCancel }: { onComplete: (descriptor: string, faceSnapshot: string, faceImages?: Record<string, string>) => void, onCancel: () => void }) {
   const engineRef = useRef<FaceSecurityEngineRef>(null);
 
   return (
@@ -626,6 +627,49 @@ const ESSENTIAL_APPS = [
   { label: "Camera", packageName: "com.android.camera" },
   { label: "Emergency", packageName: "com.android.emergency" }
 ];
+
+/** Cycles through the multi-pose registration snapshots (center/left/right),
+ *  falling back to the single legacy faceImage for buddies registered before
+ *  this existed, or a placeholder icon if nothing's captured yet at all.
+ *  Pulled out as its own component specifically so it can hold its own
+ *  useState — the buddy card that renders it is inline inside a .map(). */
+function PoseCarousel({ faceImages, fallback }: { faceImages?: Record<string, string>, fallback?: string }) {
+  const poseOrder: Array<'center' | 'left' | 'right'> = ['center', 'left', 'right'];
+  const available = poseOrder.filter(p => faceImages?.[p]);
+  const [index, setIndex] = useState(0);
+
+  const src = available.length > 0 ? faceImages![available[index % available.length]] : fallback;
+
+  if (!src) {
+    return (
+      <div className="w-16 h-16 bg-neutral-200 dark:bg-neutral-850 rounded-2xl flex items-center justify-center text-neutral-400">
+        <Camera className="w-8 h-8" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <img
+        src={src}
+        alt="Identity"
+        onClick={() => available.length > 1 && setIndex(i => (i + 1) % available.length)}
+        className={`w-16 h-16 rounded-2xl object-cover border-2 border-green-500 shadow-lg shadow-green-500/20 ${available.length > 1 ? 'cursor-pointer' : ''}`}
+        title={available.length > 1 ? `${available[index % available.length]} — tap to cycle` : undefined}
+      />
+      {available.length > 1 && (
+        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex gap-0.5">
+          {available.map((p, i) => (
+            <div
+              key={p}
+              className={`w-1 h-1 rounded-full ${i === index % available.length ? 'bg-green-500' : 'bg-neutral-300 dark:bg-neutral-600'}`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // --- App List Modal ---
 function AppListModal({ buddy, session, onClose }: { buddy: Buddy, session: Session, onClose: () => void }) {
@@ -1471,13 +1515,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                     <div className="p-4 bg-neutral-50 dark:bg-neutral-800/50 rounded-2xl border border-neutral-200 dark:border-neutral-700 mb-4">
                       <div className="text-[8px] text-neutral-400 font-black uppercase tracking-widest mb-3">Verification Step</div>
                       <div className="flex items-center gap-4 mb-4">
-                        {buddy.faceImage ? (
-                          <img src={buddy.faceImage} alt="Identity" className="w-16 h-16 rounded-2xl object-cover border-2 border-green-500 shadow-lg shadow-green-500/20" />
-                        ) : (
-                          <div className="w-16 h-16 bg-neutral-200 dark:bg-neutral-800 rounded-2xl flex items-center justify-center text-neutral-400">
-                            <Camera className="w-8 h-8" />
-                          </div>
-                        )}
+                        <PoseCarousel faceImages={buddy.faceImages} fallback={buddy.faceImage} />
                         <div className="flex-1">
                           <div className="text-[10px] text-neutral-500 font-bold mb-1">Face Profile</div>
                           <div className="text-[12px] font-black uppercase tracking-tight leading-none">{buddy.faceImage ? 'Ready to Start' : 'Waiting for Face'}</div>
@@ -2022,7 +2060,8 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
       }
 
       const buddyId = user.uid;
-      const buddyData: Buddy = {
+      const nativeDeviceId = window.Android?.getNativeDeviceId ? window.Android.getNativeDeviceId() : '';
+      const buddyData: any = {
         id: buddyId,
         name,
         deviceId: user.uid,
@@ -2037,7 +2076,8 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
         requestStop: false,
         requestPause: false,
         pausedByFace: false,
-        isOnline: true
+        isOnline: true,
+        ...(nativeDeviceId ? { nativeDeviceId } : {})
       };
 
       // Add self to buddyIds for discovery after cache clear
@@ -2078,12 +2118,13 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
     onBack();
   };
 
-  const registerFace = async (descriptor: string, faceSnapshot: string) => {
+  const registerFace = async (descriptor: string, faceSnapshot: string, faceImages?: Record<string, string>) => {
     if (!session || !buddy) return;
     setRegisteringFace(true);
     try {
       await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), {
         faceImage: faceSnapshot,
+        faceImages: faceImages || {},
         faceDescriptor: descriptor,
         status: 'pending',
         rejectionReason: null,
@@ -2529,11 +2570,6 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
         };
         if (securityAlert !== undefined) {
           updates.securityAlert = securityAlert;
-        } else {
-          // Clear security alert if returning to normal verified state
-          if (isLocked && !isPaused && buddy.securityAlert === 'SUSPECTED_SPOOF') {
-            updates.securityAlert = null;
-          }
         }
         await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), updates);
       } catch (e) { console.error("Sync error:", e); }

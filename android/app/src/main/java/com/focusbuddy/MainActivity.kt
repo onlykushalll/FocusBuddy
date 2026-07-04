@@ -226,11 +226,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun startFocusSession(whitelistJson: String) {
-            Log.w("FocusBuddy/Bridge", "startFocusSession rejected: token required")
-        }
-
-        @JavascriptInterface
         fun startFocusSession(whitelistJson: String, sessionToken: String) {
             startFocusSession(whitelistJson, "", "", sessionToken)
         }
@@ -264,15 +259,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        @JavascriptInterface
-        fun stopFocusSession() {
-            if (GlobalState.isSessionActive) {
-                Log.w("FocusBuddy/Bridge", "stopFocusSession rejected: token required")
-                return
-            }
-            GlobalState.isSessionActive = false
-            stopService(Intent(this@MainActivity, FaceAnalyzerService::class.java))
-        }
+
 
         @JavascriptInterface
         fun stopFocusSession(sessionToken: String) {
@@ -310,10 +297,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) { "" }
         }
 
-        @JavascriptInterface
-        fun launchApp(packageName: String) {
-            Log.w("FocusBuddy/Bridge", "launchApp rejected: token required")
-        }
+
 
         @JavascriptInterface
         fun launchApp(packageName: String, sessionToken: String) {
@@ -335,6 +319,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun getNativeDeviceId(): String {
+            return com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        }
+
+        @JavascriptInterface
         fun updateWhitelist(whitelistJson: String, sessionToken: String) {
             if (!GlobalState.validateSessionToken(sessionToken)) {
                 Log.w("FocusBuddy/Bridge", "updateWhitelist rejected: invalid token")
@@ -344,6 +333,7 @@ class MainActivity : AppCompatActivity() {
                 val arr = org.json.JSONArray(whitelistJson)
                 val list = List(arr.length()) { i -> arr.getString(i) }
                     .filter { it.isNotBlank() }
+                    .filterNot { HARD_NEVER_ALLOWED.contains(it) }
                 GlobalState.whitelistedApps = list
             } catch (e: Exception) {
                 Log.e("FocusBuddy", "Error updating whitelist", e)
