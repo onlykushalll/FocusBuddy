@@ -228,6 +228,20 @@ interface Buddy {
   requestPause: boolean;
   isOnline: boolean;
   securityAlert?: string | null;
+  nativeAlert?: string | null;
+  securityThreats?: {
+    rooted: boolean;
+    frida: boolean;
+    xposed: boolean;
+    emulator: boolean;
+    debugger: boolean;
+    safeMode: boolean;
+    adbEnabled: boolean;
+    devOptions: boolean;
+    accessibilityDisabled: boolean;
+    appDebuggable: boolean;
+    timestamp: number;
+  } | null;
 }
 
 // --- Components ---
@@ -1471,6 +1485,33 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                   {buddy.pausedByFace && buddy.status === 'approved' && !isEnded && (
                     <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2 text-red-500 text-[10px] font-black uppercase tracking-widest animate-pulse">
                       <AlertCircle className="w-4 h-4" /> Buddy Detected Stranger
+                    </div>
+                  )}
+
+                  {/* Native Alert Banner (e.g. Camera Blocked, Multiple Faces) */}
+                  {buddy.nativeAlert && buddy.nativeAlert !== 'NATIVE_FACE_CHECK_PENDING' && buddy.nativeAlert !== 'CRITICAL_THREAT_DETECTED' && (
+                    <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl flex items-center gap-2 text-yellow-600 text-[10px] font-black uppercase tracking-widest animate-pulse">
+                      <AlertCircle className="w-4 h-4" /> {buddy.nativeAlert.replace(/_/g, ' ')}
+                    </div>
+                  )}
+
+                  {/* Security Threat Alerts */}
+                  {(buddy.nativeAlert === 'CRITICAL_THREAT_DETECTED' || (buddy.securityThreats && Object.values(buddy.securityThreats).some(v => v === true))) && (
+                    <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex flex-col gap-1.5 text-red-500">
+                      <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest leading-none">
+                        <AlertCircle className="w-4 h-4" /> Critical Threat Detected
+                      </div>
+                      <div className="text-[9px] font-medium leading-relaxed opacity-85">
+                        Active threats: {[
+                          buddy.securityThreats?.rooted && 'Rooted',
+                          buddy.securityThreats?.frida && 'Frida',
+                          buddy.securityThreats?.xposed && 'Xposed',
+                          buddy.securityThreats?.emulator && 'Emulator',
+                          buddy.securityThreats?.debugger && 'Debugger',
+                          buddy.securityThreats?.safeMode && 'Safe Mode',
+                          buddy.securityThreats?.accessibilityDisabled && 'Accessibility Disabled',
+                        ].filter(Boolean).join(', ') || 'Security Tampering'}
+                      </div>
                     </div>
                   )}
 
