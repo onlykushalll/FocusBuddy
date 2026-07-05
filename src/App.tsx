@@ -2045,14 +2045,20 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
         const data = doc.data() as Session;
         setSession({ id: doc.id, ...data } as Session);
       });
-      const unsubBuddy = onSnapshot(doc(db, 'sessions', session.id, 'buddies', buddy.id), (doc) => {
-        if (doc.exists()) {
-          setBuddy({ id: doc.id, ...doc.data() } as Buddy);
+      const unsubBuddy = onSnapshot(doc(db, 'sessions', session.id, 'buddies', buddy.id), (docSnap) => {
+        if (docSnap.exists()) {
+          setBuddy({ id: docSnap.id, ...docSnap.data() } as Buddy);
         } else {
-          // Check if session status is not ended (implies rejection)
-          if (session && session.status !== 'ended') {
-            setError('You were removed from the session by the admin.');
-          }
+          // Fetch parent session to determine if it was deleted or ended
+          getDoc(doc(db, 'sessions', session.id)).then((sessionSnap) => {
+            if (!sessionSnap.exists() || sessionSnap.data()?.status === 'ended') {
+              setError('The session has ended or is no longer active.');
+            } else {
+              setError('You were removed from the session by the admin.');
+            }
+          }).catch(() => {
+            setError('The session has ended or is no longer active.');
+          });
           setSession(null);
           setBuddy(null);
         }
@@ -2193,10 +2199,25 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
 
   const [showFaceReg, setShowFaceReg] = useState(false);
 
-  const handleBuddyExit = () => {
-    if (session && (session.status === 'active' || session.status === 'paused')) {
-      alert("You cannot leave during an active focus session. Please ask the admin to end the session, or use the 'Request Stop' option.");
-      return;
+  const handleBuddyExit = async () => {
+    if (session) {
+      if (session.status === 'active' || session.status === 'paused') {
+        alert("You cannot leave during an active focus session. Please ask the admin to end the session, or use the 'Request Stop' option.");
+        return;
+      }
+      if (session.status === 'lobby') {
+        const confirmExit = window.confirm("Are you sure you want to leave this session?");
+        if (!confirmExit) return;
+        
+        // Delete buddy document from Firestore so they disappear from Admin screen
+        try {
+          if (buddy) {
+            await deleteDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id));
+          }
+        } catch (e) {
+          console.error("Failed to delete buddy on exit:", e);
+        }
+      }
     }
     localStorage.removeItem('active_role');
     localStorage.removeItem('active_session_code');
