@@ -4,6 +4,7 @@ import {
   User, 
   ArrowLeft, 
   Plus, 
+  Loader2,
   Clock, 
   CheckCircle2, 
   XCircle, 
@@ -711,9 +712,37 @@ function AppListModal({ buddy, session, onClose }: { buddy: Buddy, session: Sess
     'com.valvesoftware.android.steam.community', 'com.epicgames.portal',
   ]);
 
+  // Mirrors MainActivity.kt's HARD_NEVER_ALLOWED. Unlike HIGH_RISK_PACKAGES
+  // above (browsers/social apps — warn-and-proceed), these let the buddy
+  // disable the Accessibility Service or uninstall the app outright. Native
+  // updateWhitelist() already filters these regardless of what this catches —
+  // this is UI-layer defense in depth, not the only line of defense.
+  const NEVER_ALLOWED_PACKAGES = new Set([
+    'com.android.settings', 'com.google.android.settings',
+    'com.samsung.android.settings', 'com.oneplus.settings',
+    'com.miui.settings', 'com.huawei.settings', 'com.coloros.settings',
+    'com.vivo.settings', 'com.realme.settings', 'com.asus.settings',
+    'com.lenovo.settings', 'com.motorola.settings',
+    'com.android.packageinstaller', 'com.google.android.packageinstaller',
+    'com.samsung.android.packageinstaller', 'com.miui.packageinstaller',
+    'com.huawei.packagemanager', 'com.sec.android.app.packageinstaller',
+    'com.coloros.packageinstaller', 'com.android.development',
+    'com.android.developer', 'com.android.permissioncontroller',
+  ]);
+
   const toggleApp = async (packageName: string) => {
     const isWhitelisted = buddy.whitelistedApps.includes(packageName);
-    
+
+    if (!isWhitelisted && NEVER_ALLOWED_PACKAGES.has(packageName)) {
+      window.alert(
+        `"${packageName}" can't be whitelisted.\n\n` +
+        `This app can disable the focus lock itself (Settings, package installer, ` +
+        `or developer options) rather than just providing a distraction — it's ` +
+        `blocked entirely, not just discouraged.`
+      );
+      return;
+    }
+
     if (!isWhitelisted && HIGH_RISK_PACKAGES.has(packageName)) {
       const confirmed = window.confirm(
         `⚠️ HIGH RISK APP WARNING\n\n` +
@@ -1374,14 +1403,23 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                 ) : (
                   <>
                     {(!session.status || session.status === 'lobby') && (
-                      <motion.button 
-                        whileTap={{ scale: 0.95 }}
-                        onClick={startSession}
-                        disabled={buddies.length === 0 || buddies.some(b => b.status !== 'approved' || !b.faceImage)}
-                        className="w-full flex items-center justify-center gap-2 bg-[#707A3E] hover:bg-[#555D2F] disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition shadow-lg shadow-[#707A3E]/20"
-                      >
-                        <Play className="w-4 h-4" /> Start Session
-                      </motion.button>
+                      <div className="w-full">
+                        <motion.button 
+                          whileTap={{ scale: 0.95 }}
+                          onClick={startSession}
+                          disabled={buddies.length === 0 || buddies.some(b => b.status !== 'approved' || !b.faceImage)}
+                          className="w-full flex items-center justify-center gap-2 bg-[#707A3E] hover:bg-[#555D2F] disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition shadow-lg shadow-[#707A3E]/20"
+                        >
+                          <Play className="w-4 h-4" /> Start Session
+                        </motion.button>
+                        {buddies.length === 0 ? (
+                          <p className="text-center text-[10px] text-neutral-400 mt-2">Waiting for a buddy to join</p>
+                        ) : buddies.some(b => b.status !== 'approved') ? (
+                          <p className="text-center text-[10px] text-neutral-400 mt-2">Approve all buddies to start</p>
+                        ) : buddies.some(b => !b.faceImage) ? (
+                          <p className="text-center text-[10px] text-neutral-400 mt-2">Waiting for face registration</p>
+                        ) : null}
+                      </div>
                     )}
                     {session.status === 'active' && (
                       <div className="bg-[#707A3E]/10 text-[#707A3E] px-6 py-3 rounded-2xl font-mono font-black flex items-center gap-3 border border-[#707A3E]/20 text-2xl w-full justify-center">
@@ -1604,8 +1642,15 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                 </div>
               ))}
                 {buddies.length === 0 && (
-                  <div className="py-8 text-center border-2 border-dashed border-neutral-100 dark:border-neutral-900 rounded-3xl">
-                    <p className="text-xs font-bold text-neutral-400 uppercase tracking-widest">Waiting for buddies...</p>
+                  <div className="py-10 text-center border-2 border-dashed border-neutral-200 dark:border-neutral-800 rounded-3xl bg-neutral-50/50 dark:bg-neutral-900/30">
+                    <div className="relative inline-flex items-center justify-center mb-3">
+                      <div className="absolute inset-0 rounded-full bg-[#707A3E]/10 animate-ping" />
+                      <div className="relative w-10 h-10 rounded-full bg-[#707A3E]/10 flex items-center justify-center text-[#707A3E]">
+                        <UserCheck className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <p className="text-xs font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-widest">Waiting for buddies...</p>
+                    <p className="text-[10px] text-neutral-400 dark:text-neutral-600 mt-1">Share the code above to invite someone</p>
                   </div>
                 )}
               </div>
@@ -2454,6 +2499,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
           <label className="text-[10px] sm:text-xs text-neutral-500 uppercase tracking-widest mb-2 block">Your Name</label>
           <input 
             type="text" 
+            autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Enter your name..."
@@ -2483,8 +2529,9 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
         <button 
           onClick={joinSession}
           disabled={joining}
-          className="w-full bg-[#707A3E] hover:bg-[#555D2F] disabled:opacity-50 text-white py-4 rounded-2xl font-bold transition shadow-lg shadow-[#707A3E]/20"
+          className="w-full flex items-center justify-center gap-2 bg-[#707A3E] hover:bg-[#555D2F] disabled:opacity-50 text-white py-4 rounded-2xl font-bold transition shadow-lg shadow-[#707A3E]/20"
         >
+          {joining && <Loader2 className="w-4 h-4 animate-spin" />}
           {joining ? 'Connecting...' : 'Join Session'}
         </button>
       </div>
@@ -2832,8 +2879,12 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
               ))}
 
               {whitelistedAppInfos.length === 0 && (
-                <div className="col-span-full py-8 text-center text-neutral-400 border-2 border-dashed border-neutral-100 dark:border-neutral-900 rounded-2xl text-[10px] font-bold uppercase tracking-widest">
-                  No apps whitelisted
+                <div className="col-span-full py-10 text-center border-2 border-dashed border-neutral-200 dark:border-neutral-800 rounded-3xl bg-neutral-50/50 dark:bg-neutral-900/30">
+                  <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-[#707A3E]/10 flex items-center justify-center text-[#707A3E]">
+                    <Smartphone className="w-5 h-5" />
+                  </div>
+                  <p className="text-[10px] font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-widest">No apps whitelisted</p>
+                  <p className="text-[10px] text-neutral-400 dark:text-neutral-600 mt-1">Your admin hasn't approved any apps yet</p>
                 </div>
               )}
             </div>

@@ -141,8 +141,20 @@ service cloud.firestore {
                                request.resource.data.faceImage == resource.data.faceImage &&
                                request.resource.data.faceImages == resource.data.faceImages &&
                                request.resource.data.diff(resource.data).affectedKeys()
-                                 .hasOnly(['pausedByFace', 'lastFaceMatch', 'requestStop', 'requestPause', 'isOnline', 'securityThreats', 'securityAlert', 'nativeAlert']))
+                                 .hasOnly(['pausedByFace', 'lastFaceMatch', 'requestStop', 'requestPause', 'isOnline', 'securityThreats', 'securityAlert', 'nativeAlert', 'appIcons', 'nativeDeviceId']))
                             )
+                          ) ||
+                          // Native device: only the specific fields FaceAnalyzerService/SecurityChecker
+                          // write, linked via nativeDeviceId (set once by the buddy's own authenticated
+                          // web session above, via getNativeDeviceId()). Narrower than the buddy's own
+                          // field set — native has no business touching requestStop/appIcons/etc.
+                          // Uses 'in' rather than direct access — nativeDeviceId won't exist on any
+                          // buddy doc created before this field was added.
+                          (
+                            'nativeDeviceId' in resource.data &&
+                            request.auth.uid == resource.data.nativeDeviceId &&
+                            request.resource.data.diff(resource.data).affectedKeys()
+                              .hasOnly(['nativeAlert', 'securityThreats', 'pausedByFace', 'lastFaceMatch'])
                           )
                         );
                         
