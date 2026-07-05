@@ -76,6 +76,7 @@ declare global {
       getAppIcon: (packageName: string) => string; // Returns Base64 string
       launchApp: (packageName: string, sessionToken: string) => void;
       isScreenOn: () => boolean;
+      setPausedByFace: (paused: boolean) => void;
     };
   }
 }
@@ -2065,7 +2066,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
 
   // Admin presence checker on buddy side
   useEffect(() => {
-    if (!session || !session.id || session.status === 'ended') return;
+    if (!session || !session.id || session.status === 'ended' || session.status === 'lobby') return;
     
     const checkAdminPresence = () => {
       if (!session.lastActive) return;
@@ -2194,7 +2195,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
 
   const handleBuddyExit = () => {
     if (session && (session.status === 'active' || session.status === 'paused')) {
-      console.log("You cannot leave during an active focus session!");
+      alert("You cannot leave during an active focus session. Please ask the admin to end the session, or use the 'Request Stop' option.");
       return;
     }
     localStorage.removeItem('active_role');
@@ -2649,6 +2650,9 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
   }, [session.status, session.startTime, session.timerSeconds, session.pausedAt, session.accumulatedPausedSeconds, isEnded]);
 
   const updateVerification = (isLocked: boolean, isPaused: boolean, securityAlert?: string | null) => {
+    if (window.Android && window.Android.setPausedByFace) {
+      window.Android.setPausedByFace(isPaused);
+    }
     if (debounceTimeoutRef.current) clearTimeout(debounceTimeoutRef.current);
     debounceTimeoutRef.current = setTimeout(async () => {
       try {

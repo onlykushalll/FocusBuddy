@@ -1137,18 +1137,24 @@ export function useFaceSecurityEngine(
         detectorRef.current = await faceLandmarks.createDetector(
           faceLandmarks.SupportedModels.MediaPipeFaceMesh,
           {
-            runtime: 'tfjs',
+            runtime: 'mediapipe',
             refineLandmarks: true,   // iris landmarks 468–477
             maxFaces: 4,
+            solutionPath: '/mediapipe',
           }
         );
-      } catch {
+      } catch (meshErr) {
+        console.error("FaceMesh model load failed, attempting BlazeFace fallback:", meshErr);
         // Fall back to BlazeFace (no iris, limited liveness)
         usingFallback.current = true;
         const faceDetection = await import('@tensorflow-models/face-detection');
         fallbackRef.current = await faceDetection.createDetector(
           faceDetection.SupportedModels.MediaPipeFaceDetector,
-          { runtime: 'tfjs', maxFaces: 4 }
+          {
+            runtime: 'mediapipe',
+            maxFaces: 4,
+            solutionPath: '/mediapipe'
+          }
         );
       }
 

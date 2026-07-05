@@ -125,6 +125,17 @@ class AppBlockAccessibilityService : AccessibilityService() {
     private fun evaluatePackage(pkg: String) {
         if (!GlobalState.isSessionActive) return
         
+        // If the session is paused by face (buddy looked away), we block all user apps (including whitelisted ones!)
+        // but still allow the system UI and FocusBuddy itself.
+        if (GlobalState.isPausedByFace) {
+            when {
+                pkg == packageName -> resetPersistenceState()
+                ALWAYS_ALLOWED_SYSTEM.contains(pkg) -> resetPersistenceState()
+                else -> onBlockedAppDetected(pkg)
+            }
+            return
+        }
+        
         when {
             HARD_BLOCKED_PACKAGES.contains(pkg) -> onBlockedAppDetected(pkg)
             pkg == packageName -> resetPersistenceState()  // FocusBuddy itself

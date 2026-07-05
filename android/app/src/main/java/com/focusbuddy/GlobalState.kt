@@ -32,6 +32,7 @@ object GlobalState {
                     _sessionToken = ""
                     sessionId = ""
                     buddyId = ""
+                    isPausedByFace = false
                 }
                 persistAsync()
             }
@@ -47,6 +48,9 @@ object GlobalState {
 
     @Volatile
     var lastPullbackTime: Long = 0L
+
+    @Volatile
+    var isPausedByFace: Boolean = false
 
     // Persisted IDs for foreground service recovery on reboot
     @Volatile

@@ -324,6 +324,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun setPausedByFace(paused: Boolean) {
+            GlobalState.isPausedByFace = paused
+            if (paused && GlobalState.isSessionActive) {
+                Log.w("FocusBuddy/Bridge", "Instant pullback triggered by setPausedByFace")
+                val intent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or 
+                             Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                startActivity(intent)
+            }
+        }
+
+        @JavascriptInterface
         fun updateWhitelist(whitelistJson: String, sessionToken: String) {
             if (!GlobalState.validateSessionToken(sessionToken)) {
                 Log.w("FocusBuddy/Bridge", "updateWhitelist rejected: invalid token")
@@ -363,8 +376,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         private fun drawableToBitmap(drawable: Drawable): Bitmap {
-            val width = drawable.intrinsicWidth.coerceAtLeast(1)
-            val height = drawable.intrinsicHeight.coerceAtLeast(1)
+            var width = drawable.intrinsicWidth
+            var height = drawable.intrinsicHeight
+            if (width <= 0 || height <= 0) {
+                width = 72
+                height = 72
+            }
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
             drawable.setBounds(0, 0, canvas.width, canvas.height)
