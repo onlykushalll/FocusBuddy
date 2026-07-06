@@ -158,8 +158,11 @@ service cloud.firestore {
                           )
                         );
                         
-        // Buddy CANNOT self-delete. Only admin can delete buddy docs.
-        allow delete: if isAdminOfSession(sessionId);
+        // Buddy can only self-delete while still in lobby (clean exit before
+        // any session actually started) — cannot self-delete once active,
+        // preserving the original anti-tampering intent below.
+        allow delete: if isAdminOfSession(sessionId) ||
+                        (buddyId == request.auth.uid && getSession(sessionId).status == 'lobby');
       }
     }
     

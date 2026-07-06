@@ -93,6 +93,14 @@ class MainActivity : AppCompatActivity() {
         // Use WebViewAssetLoader to load local assets over https://appassets.androidplatform.net origin
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            // The bundled MediaPipe WASM/model files live at
+            // android/app/src/main/assets/mediapipe/, a sibling of the inner
+            // assets/ folder — not nested inside it. The JS side requests
+            // them from solutionPath: '/mediapipe', which was previously
+            // completely unhandled (only /assets/ was registered), so every
+            // model fetch silently failed and face detection never ran at
+            // all, despite the files genuinely being present on disk.
+            .addPathHandler("/mediapipe/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
 
         webView.webViewClient = object : WebViewClient() {
@@ -290,9 +298,14 @@ class MainActivity : AppCompatActivity() {
         fun getAppIcon(packageName: String): String {
             return try {
                 val icon = packageManager.getApplicationIcon(packageName)
-                val bitmap = drawableToBitmap(icon)
+                val fullSize = drawableToBitmap(icon)
+                // Downscale before encoding — intrinsic icon bitmaps can be 192x192+
+                // on modern devices, producing a 20-50KB base64 string per icon.
+                val scaled = Bitmap.createScaledBitmap(fullSize, ICON_TARGET_PX, ICON_TARGET_PX, true)
+                if (scaled !== fullSize) fullSize.recycle()
                 val out = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
+                scaled.recycle()
                 Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
             } catch (e: Exception) { "" }
         }
@@ -391,6 +404,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val ICON_TARGET_PX = 96
         private val HARD_NEVER_ALLOWED = setOf(
             "com.android.settings", "com.google.android.settings",
             "com.samsung.android.settings", "com.oneplus.settings",

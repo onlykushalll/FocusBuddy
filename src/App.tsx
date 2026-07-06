@@ -244,6 +244,8 @@ interface Buddy {
     appDebuggable: boolean;
     timestamp: number;
   } | null;
+  appIcons?: Record<string, string>;  // synced from buddy device for whitelisted apps only
+  nativeDeviceId?: string;            // links FaceAnalyzerService's own auth identity to this buddy doc
 }
 
 // --- Components ---
@@ -828,8 +830,15 @@ function AppListModal({ buddy, session, onClose }: { buddy: Buddy, session: Sess
               )}>
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl overflow-hidden bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center p-1.5 border border-neutral-200 dark:border-neutral-700">
-                    {app.icon ? (
-                      <img src={app.icon.startsWith('data:') ? app.icon : `data:image/png;base64,${app.icon}`} alt="" className="w-full h-full object-contain" />
+                    {(buddy.appIcons?.[app.packageName] || app.icon) ? (
+                      <img
+                        src={
+                          buddy.appIcons?.[app.packageName] ||
+                          (app.icon!.startsWith('data:') ? app.icon! : `data:image/png;base64,${app.icon}`)
+                        }
+                        alt=""
+                        className="w-full h-full object-contain"
+                      />
                     ) : (
                       <Smartphone className="w-5 h-5 text-neutral-300" />
                     )}
@@ -2618,13 +2627,31 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
     if (window.Android && window.Android.getAppIcon) {
       const neededIcons = [...(buddy.whitelistedApps || []), ...ESSENTIAL_APPS.map(e => e.packageName)];
       const newIcons: Record<string, string> = { ...appIcons };
+      const freshlyFetched: Record<string, string> = {};
       neededIcons.forEach(pkg => {
         if (!newIcons[pkg]) {
           const icon = window.Android!.getAppIcon(pkg);
-          if (icon) newIcons[pkg] = icon.startsWith('data:') ? icon : `data:image/png;base64,${icon}`;
+          if (icon) {
+            const dataUrl = icon.startsWith('data:') ? icon : `data:image/png;base64,${icon}`;
+            newIcons[pkg] = dataUrl;
+            freshlyFetched[pkg] = dataUrl;
+          }
         }
       });
       setAppIcons(newIcons);
+
+      // Push icons for WHITELISTED apps only (small, bounded set) back to
+      // Firestore so the Admin's picker — showing apps installed on THIS
+      // device, not its own — can render real icons instead of the generic
+      // placeholder. Not synced for the full installedApps list.
+      const toSync = (buddy.whitelistedApps || []).filter(pkg => freshlyFetched[pkg]);
+      if (toSync.length > 0 && session?.id && buddy?.id) {
+        const patch: Record<string, string> = {};
+        toSync.forEach(pkg => { patch[`appIcons.${pkg}`] = freshlyFetched[pkg]; });
+        updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), patch).catch(e =>
+          console.error('Icon sync failed:', e)
+        );
+      }
     }
   }, [buddy.whitelistedApps]);
 
