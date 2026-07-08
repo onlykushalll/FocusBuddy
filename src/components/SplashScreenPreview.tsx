@@ -1,14 +1,33 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Shield } from 'lucide-react';
+import { Shield, Check, Loader2, XCircle } from 'lucide-react';
 
-export default function SplashScreenPreview({ onComplete }: { onComplete: () => void }) {
+export default function SplashScreenPreview({ 
+  onComplete,
+  authReady,
+  modelsReady,
+  connectionError
+}: { 
+  onComplete: () => void;
+  authReady: boolean;
+  modelsReady: boolean;
+  connectionError: string | null;
+}) {
+  const [animationMinTimePassed, setAnimationMinTimePassed] = useState(false);
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      onComplete();
+      setAnimationMinTimePassed(true);
     }, 5000); // 5 second gap exactly
     return () => clearTimeout(timer);
-  }, [onComplete]);
+  }, []);
+
+  useEffect(() => {
+    const isAuthDone = authReady || connectionError !== null;
+    if (animationMinTimePassed && modelsReady && isAuthDone) {
+      onComplete();
+    }
+  }, [animationMinTimePassed, modelsReady, authReady, connectionError, onComplete]);
 
   return (
     <div className="fixed inset-0 z-[500] bg-[#FDFBF0] dark:bg-neutral-950 flex flex-col items-center justify-center overflow-hidden font-sans">
@@ -59,3 +78,4 @@ export default function SplashScreenPreview({ onComplete }: { onComplete: () => 
     </div>
   );
 }
+

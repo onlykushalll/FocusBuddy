@@ -51,11 +51,16 @@ import {
   onAuthStateChanged, 
   User as FirebaseUser 
 } from 'firebase/auth';
-import { db, auth } from './firebase';
+import { db, auth, enablePersistenceIfAdmin } from './firebase';
 import FaceSecurityEngine, { FaceSecurityEngineRef } from './components/FaceSecurityEngine';
 import { cn } from './lib/utils';
 import SplashScreenPreview from './components/SplashScreenPreview';
 import Onboarding from './components/Onboarding';
+import { preloadModels, getModelLoadStatus } from './lib/modelPreloader';
+
+// Early model preloading trigger
+preloadModels().catch(err => console.error("Early model preloading failed:", err));
+
 
 // --- Android Bridge Type Declaration ---
 declare global {
@@ -77,9 +82,78 @@ declare global {
       launchApp: (packageName: string, sessionToken: string) => void;
       isScreenOn: () => boolean;
       setPausedByFace: (paused: boolean) => void;
+      isOverlayPermissionEnabled: () => boolean;
+      openOverlayPermissionSettings: () => void;
+      isBatteryOptimizationIgnored: () => boolean;
+      openBatteryOptimizationSettings: () => void;
+      openAppSettings?: () => void;
+      isCameraPermissionGranted?: () => boolean;
+      isNotificationPermissionGranted?: () => boolean;
     };
   }
 }
+
+// --- Global Log Interceptor ---
+let currentSessionId: string | null = null;
+let currentBuddyId: string | null = null;
+let logBuffer: string[] = [];
+let logFlushTimer: any = null;
+
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+// @ts-ignore
+window.setLoggingContext = (sessionId: string | null, buddyId: string | null) => {
+  currentSessionId = sessionId;
+  currentBuddyId = buddyId;
+  logBuffer = [];
+  if (logFlushTimer) clearTimeout(logFlushTimer);
+};
+
+const addLogToBuffer = (level: string, message: string) => {
+  const time = new Date().toLocaleTimeString();
+  const logStr = `[${time}] [${level}] ${message}`;
+  logBuffer.push(logStr);
+  
+  if (logBuffer.length > 100) {
+    logBuffer.shift();
+  }
+  
+  if (currentSessionId && currentBuddyId) {
+    if (logFlushTimer) clearTimeout(logFlushTimer);
+    logFlushTimer = setTimeout(async () => {
+      if (!currentSessionId || !currentBuddyId) return;
+      try {
+        const docRef = doc(db, 'sessions', currentSessionId, 'buddies', currentBuddyId);
+        await updateDoc(docRef, {
+          deviceLogs: logBuffer
+        });
+      } catch (err) {
+        // Prevent infinite loops by calling original console error
+        originalError("Failed to flush logs to firestore:", err);
+      }
+    }, 1500);
+  }
+};
+
+console.log = (...args) => {
+  originalLog.apply(console, args);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  addLogToBuffer('LOG', msg);
+};
+
+console.warn = (...args) => {
+  originalWarn.apply(console, args);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  addLogToBuffer('WARN', msg);
+};
+
+console.error = (...args) => {
+  originalError.apply(console, args);
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  addLogToBuffer('ERROR', msg);
+};
 
 const getSessionToken = (): string => {
   let token = localStorage.getItem('session_token') || '';
@@ -309,6 +383,147 @@ const MOCK_APPS: AppInfo[] = [
   { label: "Maps", packageName: "com.google.android.apps.maps", icon: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" }
 ];
 
+function AutoPermissionsPrompt() {
+  const [accessibility, setAccessibility] = useState(true);
+  const [overlay, setOverlay] = useState(true);
+  const [battery, setBattery] = useState(true);
+  const [camera, setCamera] = useState(true);
+  const [notifications, setNotifications] = useState(true);
+
+  const checkAll = useCallback(() => {
+    if (!window.Android) return;
+    try {
+      if (window.Android.isAccessibilityEnabled) {
+        setAccessibility(window.Android.isAccessibilityEnabled());
+      }
+      if (window.Android.isOverlayPermissionEnabled) {
+        setOverlay(window.Android.isOverlayPermissionEnabled());
+      }
+      if (window.Android.isBatteryOptimizationIgnored) {
+        setBattery(window.Android.isBatteryOptimizationIgnored());
+      }
+      if (window.Android.isCameraPermissionGranted) {
+        setCamera(window.Android.isCameraPermissionGranted());
+      }
+      if (window.Android.isNotificationPermissionGranted) {
+        setNotifications(window.Android.isNotificationPermissionGranted());
+      }
+    } catch (e) {
+      console.warn("Failed to check android permissions:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkAll();
+    const interval = setInterval(checkAll, 1500);
+    return () => clearInterval(interval);
+  }, [checkAll]);
+
+  const allGranted = accessibility && overlay && battery && camera && notifications;
+  if (allGranted || !window.Android) return null;
+
+  return (
+    <div className="fixed bottom-6 left-6 right-6 z-[150]">
+      <motion.div 
+        initial={{ y: 50, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        className="bg-neutral-950 border border-neutral-800 rounded-3xl p-5 text-white shadow-2xl flex flex-col gap-4 max-h-[70vh] overflow-y-auto"
+      >
+        <div>
+          <div className="flex items-center gap-2 text-yellow-500 text-[10px] font-black uppercase tracking-widest leading-none mb-1.5">
+            <Shield className="w-4 h-4 animate-pulse" /> Action Required: System Setup
+          </div>
+          <p className="text-[10px] text-neutral-400 leading-relaxed font-bold">
+            Please enable the following permissions to activate the secure app locker and biometric monitoring:
+          </p>
+        </div>
+        
+        <div className="flex flex-col gap-2.5">
+          {/* Accessibility Option */}
+          {!accessibility && (
+            <div className="flex items-center justify-between bg-neutral-900/60 p-3 rounded-xl border border-neutral-800">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-black uppercase tracking-wide text-neutral-200">1. Accessibility Service</span>
+                <span className="text-[9px] text-neutral-500">Locks distracting applications</span>
+              </div>
+              <button 
+                onClick={() => window.Android?.openAccessibilitySettings()}
+                className="px-3.5 py-1.5 bg-yellow-500 text-neutral-950 font-black rounded-lg text-[9px] uppercase tracking-wider"
+              >
+                Enable
+              </button>
+            </div>
+          )}
+
+          {/* Overlay Option */}
+          {!overlay && (
+            <div className="flex items-center justify-between bg-neutral-900/60 p-3 rounded-xl border border-neutral-800">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-black uppercase tracking-wide text-neutral-200">2. Display Over Other Apps</span>
+                <span className="text-[9px] text-neutral-500">Maintains the focus screen lock</span>
+              </div>
+              <button 
+                onClick={() => window.Android?.openOverlayPermissionSettings()}
+                className="px-3.5 py-1.5 bg-yellow-500 text-neutral-950 font-black rounded-lg text-[9px] uppercase tracking-wider"
+              >
+                Allow
+              </button>
+            </div>
+          )}
+
+          {/* Battery Optimization Option */}
+          {!battery && (
+            <div className="flex items-center justify-between bg-neutral-900/60 p-3 rounded-xl border border-neutral-800">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-black uppercase tracking-wide text-neutral-200">3. Ignore Battery Optimization</span>
+                <span className="text-[9px] text-neutral-500">Keeps the tracking engine alive</span>
+              </div>
+              <button 
+                onClick={() => window.Android?.openBatteryOptimizationSettings()}
+                className="px-3.5 py-1.5 bg-yellow-500 text-neutral-950 font-black rounded-lg text-[9px] uppercase tracking-wider"
+              >
+                Grant
+              </button>
+            </div>
+          )}
+
+          {/* Camera Permission Option */}
+          {!camera && (
+            <div className="flex items-center justify-between bg-neutral-900/60 p-3 rounded-xl border border-neutral-800">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-black uppercase tracking-wide text-neutral-200">4. Camera Access</span>
+                <span className="text-[9px] text-neutral-500">Required for identity face scans</span>
+              </div>
+              <button 
+                onClick={() => window.Android?.openAppSettings?.()}
+                className="px-3.5 py-1.5 bg-yellow-500 text-neutral-950 font-black rounded-lg text-[9px] uppercase tracking-wider"
+              >
+                Grant
+              </button>
+            </div>
+          )}
+
+          {/* Notifications Option */}
+          {!notifications && (
+            <div className="flex items-center justify-between bg-neutral-900/60 p-3 rounded-xl border border-neutral-800">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] font-black uppercase tracking-wide text-neutral-200">5. Notifications</span>
+                <span className="text-[9px] text-neutral-500">Required for background watchdog</span>
+              </div>
+              <button 
+                onClick={() => window.Android?.openAppSettings?.()}
+                className="px-3.5 py-1.5 bg-yellow-500 text-neutral-950 font-black rounded-lg text-[9px] uppercase tracking-wider"
+              >
+                Grant
+              </button>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [hasSeenOnboarding, setHasSeenOnboarding] = useState(() => {
@@ -323,6 +538,21 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [modelsReady, setModelsReady] = useState(false);
+
+  useEffect(() => {
+    const checkStatus = () => {
+      const status = getModelLoadStatus();
+      if (status === 'ready') {
+        setModelsReady(true);
+      } else if (status === 'error') {
+        setModelsReady(true);
+      }
+    };
+    checkStatus();
+    const interval = setInterval(checkStatus, 500);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -412,7 +642,12 @@ export default function App() {
   if (showSplash) {
     return (
       <AnimatePresence>
-        <SplashScreenPreview onComplete={handleSplashComplete} />
+        <SplashScreenPreview 
+          onComplete={handleSplashComplete} 
+          authReady={!loading}
+          modelsReady={modelsReady}
+          connectionError={error}
+        />
       </AnimatePresence>
     );
   }
@@ -527,6 +762,7 @@ export default function App() {
           </AnimatePresence>
         </div>
       </div>
+      <AutoPermissionsPrompt />
     </div>
     </ErrorBoundary>
   );
@@ -878,6 +1114,21 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
   const [lastSession, setLastSession] = useState<{ id: string, duration: number, endedAt: Date } | null>(null);
   const [isServiceActive, setIsServiceActive] = useState(true); // Default to true to avoid flicker
   const [loadingSession, setLoadingSession] = useState(false);
+
+  const isBuddyOnline = (b: Buddy) => {
+    if (session?.status === 'lobby') {
+      return b.isOnline;
+    }
+    const now = Date.now();
+    const isWebOnline = b.isOnline;
+    let isNativeOnline = false;
+    if (b.securityThreats?.timestamp) {
+      if (now - b.securityThreats.timestamp < 40000) {
+        isNativeOnline = true;
+      }
+    }
+    return isWebOnline || isNativeOnline;
+  };
   
   const [rejectingBuddyId, setRejectingBuddyId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -917,6 +1168,7 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
           } else {
             setSession({ id: s.id, ...data } as Session);
             localStorage.setItem('active_role', 'ADMIN');
+            enablePersistenceIfAdmin();
           }
         }
       } catch (e) {
@@ -1070,10 +1322,18 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
 
   const createSession = async () => {
     const generateSessionCode = (): string => {
-      const bytes = new Uint32Array(1);
-      crypto.getRandomValues(bytes);
-      const codeNum = bytes[0] % 1000000;
-      return codeNum.toString().padStart(6, '0');
+      try {
+        const bytes = new Uint32Array(1);
+        if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+          window.crypto.getRandomValues(bytes);
+          const codeNum = bytes[0] % 1000000;
+          return codeNum.toString().padStart(6, '0');
+        }
+      } catch (e) {
+        console.warn("Secure random generation failed, falling back:", e);
+      }
+      const codeNum = Math.floor(100000 + Math.random() * 900000);
+      return codeNum.toString();
     };
     const code = generateSessionCode();
     const finalDuration = customDuration ? parseInt(customDuration) : duration;
@@ -1091,6 +1351,11 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
       await setDoc(doc(db, 'sessions', code), sessionData);
       setSession({ id: code, ...sessionData });
       setCreating(false);
+      // createSession previously never set this — only the reconnect-to-
+      // existing-session path did, so a fresh new session never correctly
+      // marked this device as admin for persistence/role-tracking purposes.
+      localStorage.setItem('active_role', 'ADMIN');
+      enablePersistenceIfAdmin();
       console.log('Session created successfully:', code);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `sessions/${code}`);
@@ -1238,7 +1503,12 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
           onBack();
         } catch (err) {
           handleFirestoreError(err, OperationType.UPDATE, `sessions/${session.id}`);
-          onBack();
+          // Previously called onBack() here too — navigating away regardless
+          // of whether the write above actually succeeded. That gave false
+          // confidence the session ended when it might still be fully live,
+          // which is exactly what caused stale sessions to persist for hours
+          // and reappear on reconnect. Stay on screen, tell the truth.
+          window.alert("Couldn't end the session — check your connection and try again. The session is likely still active.");
         }
       } else {
         onBack();
@@ -1523,8 +1793,8 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
                         {buddy.status}
                       </div>
                       <div className="flex items-center gap-1 text-[8px] font-bold text-neutral-400">
-                        <div className={cn("w-1.5 h-1.5 rounded-full", buddy.isOnline ? "bg-green-500" : "bg-neutral-300")} />
-                        {buddy.isOnline ? 'Online' : 'Offline'}
+                        <div className={cn("w-1.5 h-1.5 rounded-full", isBuddyOnline(buddy) ? "bg-green-500" : "bg-neutral-300")} />
+                        {isBuddyOnline(buddy) ? 'Online' : 'Offline'}
                       </div>
                     </div>
                   </div>
@@ -1900,6 +2170,33 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
   }, [session?.id, buddy?.id]);
 
   useEffect(() => {
+    if (!session?.id || !buddy?.id) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { isOnline: true }).catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [session?.id, buddy?.id]);
+
+  useEffect(() => {
+    if (session?.id && buddy?.id) {
+      // @ts-ignore
+      window.setLoggingContext?.(session.id, buddy.id);
+    } else {
+      // @ts-ignore
+      window.setLoggingContext?.(null, null);
+    }
+    return () => {
+      // @ts-ignore
+      window.setLoggingContext?.(null, null);
+    };
+  }, [session?.id, buddy?.id]);
+
+  useEffect(() => {
     if (session?.status === 'countdown' && session.countdownEndsAt) {
       const update = () => {
         const endsAt = session.countdownEndsAt.toDate ? session.countdownEndsAt.toDate().getTime() : session.countdownEndsAt;
@@ -2097,7 +2394,7 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
         setSession(null);
         setBuddy(null);
         
-        if (session.status === 'active' || session.status === 'paused') {
+        if (session.status === 'active' || session.status === 'paused' || session.status === 'countdown') {
           updateDoc(doc(db, 'sessions', session.id), {
             status: 'ended',
             focusActive: false,
@@ -2210,7 +2507,12 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
 
   const handleBuddyExit = async () => {
     if (session) {
-      if (session.status === 'active' || session.status === 'paused') {
+      // 'countdown' previously matched neither branch below — fell straight
+      // through to the unconditional cleanup at the bottom with zero
+      // confirmation and zero blocking, instantly pulling the buddy out.
+      // Treated like active/paused: the admin has already committed to
+      // starting, so leaving now is just as disruptive as leaving mid-session.
+      if (session.status === 'active' || session.status === 'paused' || session.status === 'countdown') {
         alert("You cannot leave during an active focus session. Please ask the admin to end the session, or use the 'Request Stop' option.");
         return;
       }
@@ -2239,15 +2541,19 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
     if (!session || !buddy) return;
     setRegisteringFace(true);
     try {
-      await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), {
+      const isRejected = buddy.status === 'rejected';
+      const patch: any = {
         faceImage: faceSnapshot,
         faceImages: faceImages || {},
-        faceDescriptor: descriptor,
-        status: 'pending',
-        rejectionReason: null,
-        requireFaceRereg: false,
-        reregCause: null
-      });
+        faceDescriptor: descriptor
+      };
+      if (isRejected) {
+        patch.status = 'pending';
+        patch.rejectionReason = null;
+        patch.requireFaceRereg = false;
+        patch.reregCause = null;
+      }
+      await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), patch);
       console.log('Face registered successfully');
       setShowFaceReg(false);
     } catch (err) {

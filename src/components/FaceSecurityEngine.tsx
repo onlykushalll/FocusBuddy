@@ -1118,45 +1118,11 @@ export function useFaceSecurityEngine(
 
   const initModels = useCallback(async () => {
     try {
-      // Lazy-load TF.js + models to avoid blocking initial render
-      const tf = await import('@tensorflow/tfjs');
-
-      // Prefer WebGL for GPU acceleration; fall back to CPU for older WebViews
-      try {
-        await import('@tensorflow/tfjs-backend-webgl');
-        await tf.setBackend('webgl');
-      } catch {
-        await import('@tensorflow/tfjs-backend-cpu');
-        await tf.setBackend('cpu');
-      }
-      await tf.ready();
-
-      // Try FaceMesh (full liveness capability)
-      try {
-        const faceLandmarks = await import('@tensorflow-models/face-landmarks-detection');
-        detectorRef.current = await faceLandmarks.createDetector(
-          faceLandmarks.SupportedModels.MediaPipeFaceMesh,
-          {
-            runtime: 'mediapipe',
-            refineLandmarks: true,   // iris landmarks 468–477
-            maxFaces: 4,
-            solutionPath: '/mediapipe',
-          }
-        );
-      } catch (meshErr) {
-        console.error("FaceMesh model load failed, attempting BlazeFace fallback:", meshErr);
-        // Fall back to BlazeFace (no iris, limited liveness)
-        usingFallback.current = true;
-        const faceDetection = await import('@tensorflow-models/face-detection');
-        fallbackRef.current = await faceDetection.createDetector(
-          faceDetection.SupportedModels.MediaPipeFaceDetector,
-          {
-            runtime: 'mediapipe',
-            maxFaces: 4,
-            solutionPath: '/mediapipe'
-          }
-        );
-      }
+      const { preloadModels } = await import('../lib/modelPreloader');
+      const { detector, fallback, fallbackActive } = await preloadModels();
+      detectorRef.current = detector;
+      fallbackRef.current = fallback;
+      usingFallback.current = fallbackActive;
 
       setState(s => ({ ...s, isModelReady: true }));
     } catch (err) {

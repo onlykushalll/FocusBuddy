@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.os.Build
 import android.provider.Settings
+import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
@@ -66,7 +67,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         GlobalState.init(this)
-        checkPermission(Manifest.permission.CAMERA, cameraPermissionCode)
+        requestAppPermissions()
 
         webView = WebView(this).also { setContentView(it) }
 
@@ -138,6 +139,37 @@ class MainActivity : AppCompatActivity() {
                     request.deny()
                 }
             }
+
+            override fun onJsAlert(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: android.webkit.JsResult?
+            ): Boolean {
+                androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Focus Buddy")
+                    .setMessage(message)
+                    .setPositiveButton(android.R.string.ok) { _, _ -> result?.confirm() }
+                    .setCancelable(false)
+                    .show()
+                return true
+            }
+
+            override fun onJsConfirm(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: android.webkit.JsResult?
+            ): Boolean {
+                androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Focus Buddy")
+                    .setMessage(message)
+                    .setPositiveButton(android.R.string.ok) { _, _ -> result?.confirm() }
+                    .setNegativeButton(android.R.string.cancel) { _, _ -> result?.cancel() }
+                    .setCancelable(false)
+                    .show()
+                return true
+            }
         }
 
         webView.addJavascriptInterface(AndroidBridge(), "Android")
@@ -195,9 +227,16 @@ class MainActivity : AppCompatActivity() {
     private fun showFocusToast() =
         Toast.makeText(this, "Focus Lock Active — Navigation Disabled", Toast.LENGTH_SHORT).show()
 
-    private fun checkPermission(permission: String, requestCode: Int) {
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_DENIED) {
-            ActivityCompat.requestPermissions(this, arrayOf(permission), requestCode)
+    private fun requestAppPermissions() {
+        val permissions = mutableListOf(Manifest.permission.CAMERA)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val toRequest = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_DENIED
+        }
+        if (toRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, toRequest.toTypedArray(), cameraPermissionCode)
         }
     }
 
@@ -218,9 +257,59 @@ class MainActivity : AppCompatActivity() {
         fun openAccessibilitySettings() = startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
 
         @JavascriptInterface
+        fun openAppSettings() {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        }
+
+        @JavascriptInterface
+        fun isCameraPermissionGranted(): Boolean {
+            return ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        }
+
+        @JavascriptInterface
+        fun isNotificationPermissionGranted(): Boolean {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                return ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            }
+            return true
+        }
+
+        @JavascriptInterface
         fun isAccessibilityEnabled(): Boolean {
             val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
             return enabledServices.contains(packageName)
+        }
+
+        @JavascriptInterface
+        fun isOverlayPermissionEnabled(): Boolean {
+            return Settings.canDrawOverlays(this@MainActivity)
+        }
+
+        @JavascriptInterface
+        fun openOverlayPermissionSettings() {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        }
+
+        @JavascriptInterface
+        fun isBatteryOptimizationIgnored(): Boolean {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            return pm.isIgnoringBatteryOptimizations(packageName)
+        }
+
+        @JavascriptInterface
+        fun openBatteryOptimizationSettings() {
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
         }
 
         @JavascriptInterface

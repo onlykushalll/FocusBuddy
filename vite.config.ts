@@ -14,5 +14,8 @@ export default defineConfig({
   server: {
     hmr: false,
     allowedHosts: true,
+    watch: {
+      ignored: ['**/android/**', '**/downloader/**', '**/dist/**'],
+    },
   },
 });
