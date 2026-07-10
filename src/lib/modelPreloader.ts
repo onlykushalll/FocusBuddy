@@ -1,5 +1,3 @@
-import * as tf from '@tensorflow/tfjs';
-
 let preloadingPromise: Promise<{ detector: any; fallback: any; fallbackActive: boolean }> | null = null;
 let detectorInstance: any = null;
 let fallbackInstance: any = null;
@@ -16,16 +14,14 @@ export function preloadModels(): Promise<{ detector: any; fallback: any; fallbac
   loadStatus = 'loading';
   preloadingPromise = (async () => {
     try {
-      // Prefer WebGL; fallback to CPU
-      try {
-        await import('@tensorflow/tfjs-backend-webgl');
-        await tf.setBackend('webgl');
-      } catch (e) {
-        console.warn("WebGL backend failed, using CPU:", e);
-        await import('@tensorflow/tfjs-backend-cpu');
-        await tf.setBackend('cpu');
-      }
-      await tf.ready();
+      // runtime: 'mediapipe' below uses Google's own MediaPipe WASM Solutions
+      // engine — a completely separate execution path from TensorFlow.js's
+      // backend system. The previous tf.setBackend('webgl')/tf.ready() calls
+      // here set up a TF.js backend that this runtime mode never touches —
+      // pure dead weight, and an extra WebGL context creation that competes
+      // with whatever context budget the MediaPipe WASM runtime itself needs,
+      // on exactly the kind of mobile GPU/WebView combos where that budget
+      // is smallest and least consistent. Removed entirely.
 
       // Try FaceMesh
       try {
