@@ -50,6 +50,7 @@ service cloud.firestore {
              (!('nativeAlert' in data) || data.nativeAlert is string || data.nativeAlert == null) &&
              (!('nativeDeviceId' in data) || data.nativeDeviceId is string) &&
              (!('appIcons' in data) || data.appIcons is map) &&
+             (!('deviceLogs' in data) || data.deviceLogs is list) &&
              (!('pausedByFace' in data) || data.pausedByFace is bool) &&
              (!('lastFaceMatch' in data) || data.lastFaceMatch is bool) &&
              (!('securityThreats' in data) || data.securityThreats is map) &&
@@ -126,12 +127,12 @@ service cloud.firestore {
                                  // Simple registration (pending -> pending)
                                  (request.resource.data.status == resource.data.status &&
                                   request.resource.data.diff(resource.data).affectedKeys()
-                                    .hasOnly(['faceDescriptor', 'faceImage', 'faceImages', 'isOnline'])) ||
+                                    .hasOnly(['faceDescriptor', 'faceImage', 'faceImages', 'isOnline', 'deviceLogs'])) ||
                                  // Re-registration (rejected -> pending)
                                  (resource.data.status == 'rejected' &&
                                   request.resource.data.status == 'pending' &&
                                   request.resource.data.diff(resource.data).affectedKeys()
-                                    .hasOnly(['faceDescriptor', 'faceImage', 'faceImages', 'status', 'rejectionReason', 'requireFaceRereg', 'reregCause', 'isOnline']))
+                                    .hasOnly(['faceDescriptor', 'faceImage', 'faceImages', 'status', 'rejectionReason', 'requireFaceRereg', 'reregCause', 'isOnline', 'deviceLogs']))
                                )
                               ) ||
                               // If session is active/paused/countdown/ended, buddy can update verification, request flags, and security reports
@@ -141,7 +142,7 @@ service cloud.firestore {
                                request.resource.data.faceImage == resource.data.faceImage &&
                                request.resource.data.faceImages == resource.data.faceImages &&
                                request.resource.data.diff(resource.data).affectedKeys()
-                                 .hasOnly(['pausedByFace', 'lastFaceMatch', 'requestStop', 'requestPause', 'isOnline', 'securityThreats', 'securityAlert', 'nativeAlert', 'appIcons', 'nativeDeviceId']))
+                                 .hasOnly(['pausedByFace', 'lastFaceMatch', 'requestStop', 'requestPause', 'isOnline', 'securityThreats', 'securityAlert', 'nativeAlert', 'appIcons', 'nativeDeviceId', 'deviceLogs']))
                             )
                           ) ||
                           // Native device: only the specific fields FaceAnalyzerService/SecurityChecker

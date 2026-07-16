@@ -1,3 +1,20 @@
+// Dynamic import() again — NOT reverting the actual fix, just relocating it.
+// Root cause of "T is not a function", confirmed by reading the actual
+// package source: an unconditional, top-level
+// `import { loadGraphModel as T } from "@tensorflow/tfjs-converter"` inside
+// face-landmarks-detection's own module, executed regardless of which
+// runtime ('mediapipe' vs 'tfjs') actually gets selected. A dynamic import()
+// boundary that cuts this dependency graph into MULTIPLE separate chunks is
+// what breaks Rollup's resolution of that binding.
+//
+// The actual fix now lives in vite.config.ts's manualChunks: it forces the
+// ENTIRE TF.js/face-detection/mediapipe dependency group into ONE chunk
+// file, so Rollup resolves everything within that single file with no
+// boundary cutting through it. That's what makes it safe to go back to a
+// dynamic import() here — this only controls whether that one chunk loads
+// eagerly (bundled into the main app chunk, which static import here
+// caused, blocking initial parse/render) or lazily in the background, which
+// is what the splash-screen parallel-loading design needs.
 let preloadingPromise: Promise<{ detector: any; fallback: any; fallbackActive: boolean }> | null = null;
 let detectorInstance: any = null;
 let fallbackInstance: any = null;
