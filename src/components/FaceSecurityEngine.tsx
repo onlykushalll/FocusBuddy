@@ -32,6 +32,7 @@ import React, {
   useState,
   forwardRef,
 } from 'react';
+import { preloadModels } from '../lib/modelPreloader';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §1  TYPES & CONSTANTS
@@ -1118,7 +1119,6 @@ export function useFaceSecurityEngine(
 
   const initModels = useCallback(async () => {
     try {
-      const { preloadModels } = await import('../lib/modelPreloader');
       const { detector, fallback, fallbackActive } = await preloadModels();
       detectorRef.current = detector;
       fallbackRef.current = fallback;
