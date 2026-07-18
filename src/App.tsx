@@ -700,7 +700,10 @@ export default function App() {
         </header>
 
         {isOffline && (
-          <div className="fixed top-0 left-0 right-0 z-[300] bg-orange-600 text-white text-[10px] uppercase tracking-[0.2em] font-bold py-1 text-center">
+          <div
+            className="fixed top-0 left-0 right-0 z-[300] bg-orange-600 text-white text-[10px] uppercase tracking-[0.2em] font-bold pb-1 text-center"
+            style={{ paddingTop: 'calc(0.25rem + env(safe-area-inset-top))' }}
+          >
             Device is Offline — Using Local Cache
           </div>
         )}
@@ -2911,7 +2914,7 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
     if (window.Android && buddy.whitelistedApps) {
       window.Android.updateWhitelist(JSON.stringify(buddy.whitelistedApps), getSessionToken());
     }
-  }, [buddy.whitelistedApps]);
+  }, [JSON.stringify(buddy.whitelistedApps)]);
 
   useEffect(() => {
     if (window.Android) {
@@ -2959,7 +2962,7 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
         );
       }
     }
-  }, [buddy.whitelistedApps]);
+  }, [JSON.stringify(buddy.whitelistedApps)]);
 
   useEffect(() => {
     if (isEnded) { setTimeLeft(0); return; }
