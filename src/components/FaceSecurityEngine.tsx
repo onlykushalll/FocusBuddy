@@ -1099,6 +1099,11 @@ export function useFaceSecurityEngine(
   const registrationSnapshots = useRef<Record<string, string>>({});
   const registrationStageRef      = useRef(-1);   // -1 forces the first-frame reset below
   const registrationStageStartRef = useRef(0);
+  const onEngineErrorRef = useRef(onEngineError);
+
+  useEffect(() => {
+    onEngineErrorRef.current = onEngineError;
+  }, [onEngineError]);
 
   // ── Load persisted descriptor ─────────────────────────────────────────────
 
@@ -1126,11 +1131,13 @@ export function useFaceSecurityEngine(
 
       setState(s => ({ ...s, isModelReady: true }));
     } catch (err) {
-      onEngineError?.(`Model load failed: ${(err as Error).message}`);
+      onEngineErrorRef.current?.(`Model load failed: ${(err as Error).message}`);
     }
-  }, [onEngineError]);
+  }, []);
 
-  useEffect(() => { initModels(); }, [initModels]);
+  useEffect(() => {
+    void initModels();
+  }, []);
 
   // ── Camera stream ─────────────────────────────────────────────────────────
 
@@ -1144,9 +1151,9 @@ export function useFaceSecurityEngine(
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
     } catch (err) {
-      onEngineError?.(`Camera error: ${(err as Error).message}`);
+      onEngineErrorRef.current?.(`Camera error: ${(err as Error).message}`);
     }
-  }, [videoRef, onEngineError]);
+  }, [videoRef]);
 
   // ── Core detection frame ──────────────────────────────────────────────────
 

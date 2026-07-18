@@ -115,7 +115,7 @@ declare global {
 //   before the WebView is hidden or torn down. Not a guarantee (async
 //   writes can't be awaited during teardown) but materially improves the
 //   odds of catching a crash-and-close.
-interface LogEntry { t: string; lvl: string; msg: string; }
+interface LogEntry { t: string; lvl: string; msg: string; count: number; }
 
 let currentSessionId: string | null = null;
 let currentBuddyId: string | null = null;
@@ -123,8 +123,14 @@ let logBuffer: LogEntry[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingSince = 0;
 let hasErrorPending = false;
+let lastFlushStartedAt = 0;
 const MAX_BUFFER_ENTRIES = 300;
 const MAX_PENDING_WINDOW_MS = 2000;
+// A repeating failure (e.g. a retry loop) must never turn into a write
+// per occurrence - that's exactly what exhausted Firestore's write queue
+// once already. This is a hard floor independent of the debounce logic
+// above: no matter how urgent, no more than one flush per this interval.
+const MIN_MS_BETWEEN_FLUSHES = 800;
 
 const originalLog = console.log;
 const originalWarn = console.warn;
@@ -144,12 +150,13 @@ async function flushLogsNow() {
   flushTimer = null;
   pendingSince = 0;
   hasErrorPending = false;
+  lastFlushStartedAt = Date.now();
   if (!currentSessionId || !currentBuddyId || logBuffer.length === 0) return;
   const snapshot = logBuffer.slice(-MAX_BUFFER_ENTRIES);
   try {
     const docRef = doc(db, 'sessions', currentSessionId, 'buddies', currentBuddyId);
     await updateDoc(docRef, {
-      deviceLogs: snapshot.map(e => `[${e.t}] [${e.lvl}] ${e.msg}`),
+      deviceLogs: snapshot.map(e => `[${e.t}] [${e.lvl}]${e.count > 1 ? ` (x${e.count})` : ''} ${e.msg}`),
     });
   } catch (err) {
     originalError("Failed to flush logs to firestore:", err);
@@ -161,14 +168,26 @@ function scheduleFlush() {
   const now = Date.now();
   if (!pendingSince) pendingSince = now;
   const baseDelay = hasErrorPending ? 150 : 600;
-  const capped = Math.min(baseDelay, Math.max(0, MAX_PENDING_WINDOW_MS - (now - pendingSince)));
+  const debounceCapped = Math.min(baseDelay, Math.max(0, MAX_PENDING_WINDOW_MS - (now - pendingSince)));
+  const sinceLastFlush = now - lastFlushStartedAt;
+  const rateLimitFloor = sinceLastFlush < MIN_MS_BETWEEN_FLUSHES ? (MIN_MS_BETWEEN_FLUSHES - sinceLastFlush) : 0;
+  const delay = Math.max(debounceCapped, rateLimitFloor);
   if (flushTimer) clearTimeout(flushTimer);
-  flushTimer = setTimeout(flushLogsNow, capped);
+  flushTimer = setTimeout(flushLogsNow, delay);
 }
 
 const addLogToBuffer = (level: string, message: string) => {
-  logBuffer.push({ t: new Date().toLocaleTimeString(), lvl: level, msg: message });
-  if (logBuffer.length > MAX_BUFFER_ENTRIES) logBuffer.shift();
+  const last = logBuffer[logBuffer.length - 1];
+  if (last && last.lvl === level && last.msg === message) {
+    // Same message repeating (a retry loop is exactly this shape) - collapse
+    // into a count instead of burning the whole 300-entry buffer on copies
+    // of one line, and instead of scheduling a flush per occurrence.
+    last.count += 1;
+    last.t = new Date().toLocaleTimeString();
+  } else {
+    logBuffer.push({ t: new Date().toLocaleTimeString(), lvl: level, msg: message, count: 1 });
+    if (logBuffer.length > MAX_BUFFER_ENTRIES) logBuffer.shift();
+  }
   if (level === 'ERROR') hasErrorPending = true;
   scheduleFlush();
 };

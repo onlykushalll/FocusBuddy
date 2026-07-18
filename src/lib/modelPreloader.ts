@@ -15,6 +15,11 @@
 // eagerly (bundled into the main app chunk, which static import here
 // caused, blocking initial parse/render) or lazily in the background, which
 // is what the splash-screen parallel-loading design needs.
+// Keep these imports static. The Android WebView evaluates their circular TF.js
+// exports correctly only when the complete graph is initialized up front.
+import * as faceLandmarks from '@tensorflow-models/face-landmarks-detection';
+import * as faceDetection from '@tensorflow-models/face-detection';
+
 let preloadingPromise: Promise<{ detector: any; fallback: any; fallbackActive: boolean }> | null = null;
 let detectorInstance: any = null;
 let fallbackInstance: any = null;
@@ -42,7 +47,6 @@ export function preloadModels(): Promise<{ detector: any; fallback: any; fallbac
 
       // Try FaceMesh
       try {
-        const faceLandmarks = await import('@tensorflow-models/face-landmarks-detection');
         detectorInstance = await faceLandmarks.createDetector(
           faceLandmarks.SupportedModels.MediaPipeFaceMesh,
           {
@@ -57,7 +61,6 @@ export function preloadModels(): Promise<{ detector: any; fallback: any; fallbac
       } catch (meshErr) {
         console.error("FaceMesh load failed during preloading, trying BlazeFace:", meshErr);
         usingFallback = true;
-        const faceDetection = await import('@tensorflow-models/face-detection');
         fallbackInstance = await faceDetection.createDetector(
           faceDetection.SupportedModels.MediaPipeFaceDetector,
           {
