@@ -94,66 +94,138 @@ declare global {
 }
 
 // --- Global Log Interceptor ---
+// Captures console.log/warn/error, uncaught exceptions, and unhandled
+// promise rejections into a rolling buffer and flushes it to the buddy's
+// Firestore doc (deviceLogs) so failures can be debugged after the fact
+// without needing physical access to the device.
+//
+// Design notes (each fixes a real gap the previous version had):
+// - Buffering starts immediately at module load, before any session/buddy
+//   context exists. Early startup failures (e.g. the model preload that
+//   fires the instant this module evaluates) are not lost - they sit in
+//   the buffer until a context is set, then flush as a backlog.
+// - setLoggingContext no longer wipes the buffer on every call. It used to
+//   reset logBuffer = [] unconditionally, which would silently destroy any
+//   backlog at the exact moment it became flushable.
+// - Errors (console.error, uncaught exceptions, unhandled rejections) flush
+//   fast. Everything else is lightly debounced so a chatty app doesn't
+//   hammer Firestore with a write per console.log call - but the debounce
+//   is capped so a sustained burst can't postpone a flush forever.
+// - A visibilitychange/pagehide listener makes a best-effort flush right
+//   before the WebView is hidden or torn down. Not a guarantee (async
+//   writes can't be awaited during teardown) but materially improves the
+//   odds of catching a crash-and-close.
+interface LogEntry { t: string; lvl: string; msg: string; }
+
 let currentSessionId: string | null = null;
 let currentBuddyId: string | null = null;
-let logBuffer: string[] = [];
-let logFlushTimer: any = null;
+let logBuffer: LogEntry[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSince = 0;
+let hasErrorPending = false;
+const MAX_BUFFER_ENTRIES = 300;
+const MAX_PENDING_WINDOW_MS = 2000;
 
 const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
 
-// @ts-ignore
-window.setLoggingContext = (sessionId: string | null, buddyId: string | null) => {
-  currentSessionId = sessionId;
-  currentBuddyId = buddyId;
-  logBuffer = [];
-  if (logFlushTimer) clearTimeout(logFlushTimer);
-};
+function serializeArgs(args: unknown[]): string {
+  return args.map(a => {
+    if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? '\n' + a.stack : ''}`;
+    if (typeof a === 'object' && a !== null) {
+      try { return JSON.stringify(a); } catch { return String(a); }
+    }
+    return String(a);
+  }).join(' ');
+}
+
+async function flushLogsNow() {
+  flushTimer = null;
+  pendingSince = 0;
+  hasErrorPending = false;
+  if (!currentSessionId || !currentBuddyId || logBuffer.length === 0) return;
+  const snapshot = logBuffer.slice(-MAX_BUFFER_ENTRIES);
+  try {
+    const docRef = doc(db, 'sessions', currentSessionId, 'buddies', currentBuddyId);
+    await updateDoc(docRef, {
+      deviceLogs: snapshot.map(e => `[${e.t}] [${e.lvl}] ${e.msg}`),
+    });
+  } catch (err) {
+    originalError("Failed to flush logs to firestore:", err);
+  }
+}
+
+function scheduleFlush() {
+  if (!currentSessionId || !currentBuddyId) return;
+  const now = Date.now();
+  if (!pendingSince) pendingSince = now;
+  const baseDelay = hasErrorPending ? 150 : 600;
+  const capped = Math.min(baseDelay, Math.max(0, MAX_PENDING_WINDOW_MS - (now - pendingSince)));
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(flushLogsNow, capped);
+}
 
 const addLogToBuffer = (level: string, message: string) => {
-  const time = new Date().toLocaleTimeString();
-  const logStr = `[${time}] [${level}] ${message}`;
-  logBuffer.push(logStr);
-  
-  if (logBuffer.length > 100) {
-    logBuffer.shift();
-  }
-  
-  if (currentSessionId && currentBuddyId) {
-    if (logFlushTimer) clearTimeout(logFlushTimer);
-    logFlushTimer = setTimeout(async () => {
-      if (!currentSessionId || !currentBuddyId) return;
-      try {
-        const docRef = doc(db, 'sessions', currentSessionId, 'buddies', currentBuddyId);
-        await updateDoc(docRef, {
-          deviceLogs: logBuffer
-        });
-      } catch (err) {
-        // Prevent infinite loops by calling original console error
-        originalError("Failed to flush logs to firestore:", err);
-      }
-    }, 1500);
+  logBuffer.push({ t: new Date().toLocaleTimeString(), lvl: level, msg: message });
+  if (logBuffer.length > MAX_BUFFER_ENTRIES) logBuffer.shift();
+  if (level === 'ERROR') hasErrorPending = true;
+  scheduleFlush();
+};
+
+// @ts-ignore
+window.setLoggingContext = (sessionId: string | null, buddyId: string | null) => {
+  const gainedContext = (!currentSessionId || !currentBuddyId) && !!sessionId && !!buddyId;
+  currentSessionId = sessionId;
+  currentBuddyId = buddyId;
+  if (gainedContext && logBuffer.length > 0) {
+    // Flush whatever accumulated before this context existed - e.g. errors
+    // during registration, before any session/buddy was known yet.
+    hasErrorPending = true;
+    scheduleFlush();
   }
 };
 
 console.log = (...args) => {
   originalLog.apply(console, args);
-  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  addLogToBuffer('LOG', msg);
+  addLogToBuffer('LOG', serializeArgs(args));
 };
 
 console.warn = (...args) => {
   originalWarn.apply(console, args);
-  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  addLogToBuffer('WARN', msg);
+  addLogToBuffer('WARN', serializeArgs(args));
 };
 
 console.error = (...args) => {
   originalError.apply(console, args);
-  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
-  addLogToBuffer('ERROR', msg);
+  addLogToBuffer('ERROR', serializeArgs(args));
 };
+
+window.addEventListener('error', (event) => {
+  addLogToBuffer('ERROR', `Uncaught exception: ${event.message} @ ${event.filename}:${event.lineno}:${event.colno}${event.error?.stack ? '\n' + event.error.stack : ''}`);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const detail = reason instanceof Error
+    ? `${reason.name}: ${reason.message}${reason.stack ? '\n' + reason.stack : ''}`
+    : String(reason);
+  addLogToBuffer('ERROR', `Unhandled promise rejection: ${detail}`);
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && logBuffer.length > 0) {
+    hasErrorPending = true;
+    scheduleFlush();
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  if (logBuffer.length > 0) {
+    hasErrorPending = true;
+    scheduleFlush();
+  }
+});
 
 const getSessionToken = (): string => {
   let token = localStorage.getItem('session_token') || '';
@@ -337,7 +409,7 @@ function FaceRegistration({ onComplete, onCancel }: { onComplete: (descriptor: s
           ref={engineRef}
           isSessionActive={false}
           onRegistrationComplete={onComplete}
-          onEngineError={(err) => setEngineError(err)}
+          onEngineError={(err) => { console.error('Face engine failed during registration:', err); setEngineError(err); }}
         />
       </div>
 
@@ -2334,6 +2406,19 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
     };
     discoverActiveSession();
   }, [user.uid]);
+
+  // Set logging context as soon as a session+buddy are known at all, not
+  // just once FocusMode mounts. Registration (and the whole lobby phase)
+  // happens well before FocusMode exists, and that's exactly where the
+  // failures worth debugging tend to occur - without this, every log
+  // during registration was buffered locally and never sent anywhere,
+  // since currentSessionId/currentBuddyId stayed null the whole time.
+  useEffect(() => {
+    if (session?.id && buddy?.id) {
+      // @ts-ignore
+      window.setLoggingContext?.(session.id, buddy.id);
+    }
+  }, [session?.id, buddy?.id]);
 
   useEffect(() => {
     const savedCode = localStorage.getItem('active_session_code');
