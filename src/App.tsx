@@ -326,18 +326,44 @@ interface Buddy {
 
 function FaceRegistration({ onComplete, onCancel }: { onComplete: (descriptor: string, faceSnapshot: string, faceImages?: Record<string, string>) => void, onCancel: () => void }) {
   const engineRef = useRef<FaceSecurityEngineRef>(null);
+  const [engineError, setEngineError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
 
   return (
     <div className="fixed inset-0 z-[200] bg-[#FDFBF0] dark:bg-black flex flex-col items-center justify-center p-6 backdrop-blur-md">
       <div className="relative w-full max-w-sm aspect-[4/3] rounded-3xl overflow-hidden border-4 border-[#707A3E]/30 shadow-2xl shadow-[#707A3E]/20 bg-black">
         <FaceSecurityEngine 
+          key={retryKey}
           ref={engineRef}
           isSessionActive={false}
           onRegistrationComplete={onComplete}
-          onEngineError={(err) => alert(err)}
+          onEngineError={(err) => setEngineError(err)}
         />
       </div>
 
+      {engineError ? (
+        <div className="mt-8 text-center space-y-4 max-w-sm">
+          <h3 className="text-xl font-black tracking-tight text-red-500">Camera Engine Failed</h3>
+          <p className="text-sm text-neutral-500 font-medium leading-relaxed">
+            {engineError}
+          </p>
+          <div className="pt-4 flex flex-col gap-2 w-full">
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => { setEngineError(null); setRetryKey(k => k + 1); }}
+              className="w-full bg-[#707A3E] text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-[#707A3E]/20"
+            >
+              Retry
+            </motion.button>
+            <button
+              onClick={onCancel}
+              className="w-full py-4 text-neutral-400 font-bold text-[10px] uppercase tracking-widest"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="mt-8 text-center space-y-4 max-w-sm">
         <h3 className="text-xl font-black tracking-tight">Biometric Registration</h3>
         <p className="text-sm text-neutral-500 font-medium leading-relaxed">
@@ -361,6 +387,7 @@ function FaceRegistration({ onComplete, onCancel }: { onComplete: (descriptor: s
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -3060,6 +3087,16 @@ function FocusMode({ session, buddy, darkMode }: { session: Session, buddy: Budd
         onBuddyReturned={() => updateVerification(true, false, null)}
         onCameraBlocked={() => updateVerification(true, false)} // Anti-escape
         onSuspectedSpoof={() => updateVerification(false, false, 'SUSPECTED_SPOOF')}
+        onEngineError={(err) => {
+          // Fail-closed: if the detection engine itself can't come up during
+          // an active session (models never loaded, WASM failure, etc.),
+          // that's not a "no error handler = silently do nothing" situation
+          // — a buddy exploiting a model-load failure to kill monitoring
+          // entirely is exactly the anti-escape scenario onCameraBlocked
+          // already handles. Same lock behavior applies here.
+          console.error('Face engine failed during active session:', err);
+          updateVerification(true, false);
+        }}
       />
       
       {/* Immersive background for Focus Mode */}

@@ -78,6 +78,13 @@ export function preloadModels(): Promise<{ detector: any; fallback: any; fallbac
     } catch (err) {
       loadStatus = 'error';
       console.error("Preloading models failed:", err);
+      // Don't let a single failed attempt (e.g. a transient WASM/network
+      // hiccup on a cold start) permanently poison every future call for
+      // the rest of the app's process lifetime. Reset the cache so the
+      // next call — whether from a user retry, a component remount, or
+      // the splash screen's own retry logic — gets a genuine fresh attempt
+      // instead of instantly replaying this same stale rejection forever.
+      preloadingPromise = null;
       throw err;
     }
   })();
