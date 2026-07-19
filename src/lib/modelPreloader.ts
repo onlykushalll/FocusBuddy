@@ -1,28 +1,95 @@
-// Dynamic import() again — NOT reverting the actual fix, just relocating it.
-// Root cause of "T is not a function", confirmed by reading the actual
-// package source: an unconditional, top-level
-// `import { loadGraphModel as T } from "@tensorflow/tfjs-converter"` inside
-// face-landmarks-detection's own module, executed regardless of which
-// runtime ('mediapipe' vs 'tfjs') actually gets selected. A dynamic import()
-// boundary that cuts this dependency graph into MULTIPLE separate chunks is
-// what breaks Rollup's resolution of that binding.
+// Migrated off the legacy MediaPipe "Solutions" web runtime
+// (@tensorflow-models/face-landmarks-detection + face-detection, both
+// running via runtime: 'mediapipe') onto MediaPipe's current, actively
+// maintained Tasks Vision API (@mediapipe/tasks-vision: FaceLandmarker +
+// FaceDetector).
 //
-// The actual fix now lives in vite.config.ts's manualChunks: it forces the
-// ENTIRE TF.js/face-detection/mediapipe dependency group into ONE chunk
-// file, so Rollup resolves everything within that single file with no
-// boundary cutting through it. That's what makes it safe to go back to a
-// dynamic import() here — this only controls whether that one chunk loads
-// eagerly (bundled into the main app chunk, which static import here
-// caused, blocking initial parse/render) or lazily in the background, which
-// is what the splash-screen parallel-loading design needs.
-// Keep these imports static. The Android WebView evaluates their circular TF.js
-// exports correctly only when the complete graph is initialized up front.
-import * as faceLandmarks from '@tensorflow-models/face-landmarks-detection';
-import * as faceDetection from '@tensorflow-models/face-detection';
+// Why: extensive real on-device testing (both here and independently via
+// Codex with live ADB access to the same phone) ruled out bundling,
+// chunking, minification, and dynamic-vs-static imports as the cause of
+// "X is not a function" during model load. The failure reproduced
+// identically across every one of those variants, inside a single merged
+// chunk, in both the primary (FaceMesh) and fallback (BlazeFace) code
+// paths - strong evidence the legacy Solutions runtime itself has a real
+// incompatibility with this WebView, not something fixable at the bundler
+// layer. Tasks Vision is a different underlying loading mechanism
+// entirely (no dependency on TF.js at all), not just another bundling
+// variant of the same code.
+//
+// Everything downstream of this file - the liveness engine, temporal
+// consensus buffer, dual-metric identity matching, multi-pose enrollment -
+// is UNCHANGED. Those all operate on the same Kps = {x,y,z}[] shape,
+// indexed positionally (LM.NOSE_TIP etc.) against MediaPipe's canonical
+// 478-point face mesh topology, which Tasks Vision preserves exactly. The
+// two estimateFaces() adapters below exist specifically so none of that
+// code has to know anything changed.
+import {
+  FilesetResolver,
+  FaceLandmarker,
+  FaceDetector,
+} from '@mediapipe/tasks-vision';
 
-let preloadingPromise: Promise<{ detector: any; fallback: any; fallbackActive: boolean }> | null = null;
-let detectorInstance: any = null;
-let fallbackInstance: any = null;
+interface AdaptedFace {
+  keypoints: { x: number; y: number; z?: number }[];
+  box?: { xMin: number; yMin: number; width: number; height: number };
+}
+
+interface FaceModel {
+  estimateFaces(video: HTMLVideoElement): Promise<AdaptedFace[]>;
+}
+
+// The old API returned keypoints in pixel space (matching the video's
+// native dimensions), not normalized [0,1]. Tasks Vision's landmarks are
+// normalized. Converting back to pixel space keeps every downstream
+// consumer - descriptor math (scale-invariant, so this wouldn't have
+// mattered), HUD box rendering (which does need real pixel coordinates) -
+// working exactly as before, with no behavioral difference to account for.
+function toPixelSpace(l: { x: number; y: number; z?: number }, video: HTMLVideoElement) {
+  return { x: l.x * video.videoWidth, y: l.y * video.videoHeight, z: (l.z ?? 0) * video.videoWidth };
+}
+
+function wrapLandmarker(landmarker: FaceLandmarker): FaceModel {
+  return {
+    async estimateFaces(video: HTMLVideoElement): Promise<AdaptedFace[]> {
+      const result = landmarker.detectForVideo(video, performance.now());
+      return (result.faceLandmarks || []).map((landmarks): AdaptedFace => {
+        const keypoints = landmarks.map(l => toPixelSpace(l, video));
+        // Tasks Vision doesn't hand back a bounding box for FaceLandmarker
+        // (only for FaceDetector) - deriving one from landmark extents is
+        // a faithful equivalent for the HUD overlay, which is all the old
+        // box field was ever used for.
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of keypoints) {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        }
+        return { keypoints, box: { xMin: minX, yMin: minY, width: maxX - minX, height: maxY - minY } };
+      });
+    },
+  };
+}
+
+function wrapDetector(detector: FaceDetector): FaceModel {
+  return {
+    async estimateFaces(video: HTMLVideoElement): Promise<AdaptedFace[]> {
+      const result = detector.detectForVideo(video, performance.now());
+      return (result.detections || []).map((d): AdaptedFace => {
+        const keypoints = (d.keypoints || []).map(k => toPixelSpace({ x: k.x, y: k.y, z: 0 }, video));
+        const bb = d.boundingBox;
+        return {
+          keypoints,
+          box: bb ? { xMin: bb.originX, yMin: bb.originY, width: bb.width, height: bb.height } : undefined,
+        };
+      });
+    },
+  };
+}
+
+let preloadingPromise: Promise<{ detector: FaceModel | null; fallback: FaceModel | null; fallbackActive: boolean }> | null = null;
+let detectorInstance: FaceModel | null = null;
+let fallbackInstance: FaceModel | null = null;
 let usingFallback = false;
 let loadStatus: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 
@@ -30,63 +97,54 @@ export function getModelLoadStatus(): 'idle' | 'loading' | 'ready' | 'error' {
   return loadStatus;
 }
 
-export function preloadModels(): Promise<{ detector: any; fallback: any; fallbackActive: boolean }> {
+export function preloadModels(): Promise<{ detector: FaceModel | null; fallback: FaceModel | null; fallbackActive: boolean }> {
   if (preloadingPromise) return preloadingPromise;
 
   loadStatus = 'loading';
   preloadingPromise = (async () => {
     try {
-      // runtime: 'mediapipe' below uses Google's own MediaPipe WASM Solutions
-      // engine — a completely separate execution path from TensorFlow.js's
-      // backend system. The previous tf.setBackend('webgl')/tf.ready() calls
-      // here set up a TF.js backend that this runtime mode never touches —
-      // pure dead weight, and an extra WebGL context creation that competes
-      // with whatever context budget the MediaPipe WASM runtime itself needs,
-      // on exactly the kind of mobile GPU/WebView combos where that budget
-      // is smallest and least consistent. Removed entirely.
+      // Both models share one WASM fileset - resolved once, reused for both.
+      // Bundled offline at /mediapipe (same WebViewAssetLoader path prefix
+      // that already serves these files correctly - no native/Kotlin
+      // changes needed).
+      const vision = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
 
-      // Try FaceMesh
       try {
-        detectorInstance = await faceLandmarks.createDetector(
-          faceLandmarks.SupportedModels.MediaPipeFaceMesh,
-          {
-            runtime: 'mediapipe',
-            refineLandmarks: true,
-            maxFaces: 4,
-            solutionPath: '/mediapipe',
-          }
-        );
+        const faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: '/mediapipe/face_landmarker.task',
+            delegate: 'CPU',
+          },
+          runningMode: 'VIDEO',
+          numFaces: 4,
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: false,
+        });
+        detectorInstance = wrapLandmarker(faceLandmarker);
         usingFallback = false;
-        console.log("FaceMesh loaded successfully via preloader");
+        console.log('FaceLandmarker loaded successfully via preloader');
       } catch (meshErr) {
-        console.error("FaceMesh load failed during preloading, trying BlazeFace:", meshErr);
+        console.error('FaceLandmarker load failed during preloading, trying FaceDetector:', meshErr);
         usingFallback = true;
-        fallbackInstance = await faceDetection.createDetector(
-          faceDetection.SupportedModels.MediaPipeFaceDetector,
-          {
-            runtime: 'mediapipe',
-            maxFaces: 4,
-            solutionPath: '/mediapipe'
-          }
-        );
-        console.log("BlazeFace loaded successfully via preloader (fallback)");
+        const faceDetector = await FaceDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: '/mediapipe/blaze_face_short_range.tflite',
+            delegate: 'CPU',
+          },
+          runningMode: 'VIDEO',
+        });
+        fallbackInstance = wrapDetector(faceDetector);
+        console.log('FaceDetector loaded successfully via preloader (fallback)');
       }
 
       loadStatus = 'ready';
-      return {
-        detector: detectorInstance,
-        fallback: fallbackInstance,
-        fallbackActive: usingFallback
-      };
+      return { detector: detectorInstance, fallback: fallbackInstance, fallbackActive: usingFallback };
     } catch (err) {
       loadStatus = 'error';
-      console.error("Preloading models failed:", err);
-      // Don't let a single failed attempt (e.g. a transient WASM/network
-      // hiccup on a cold start) permanently poison every future call for
-      // the rest of the app's process lifetime. Reset the cache so the
-      // next call — whether from a user retry, a component remount, or
-      // the splash screen's own retry logic — gets a genuine fresh attempt
-      // instead of instantly replaying this same stale rejection forever.
+      console.error('Preloading models failed:', err);
+      // Don't let a single failed attempt permanently poison every future
+      // call for the rest of the app's process lifetime - reset the cache
+      // so the next call gets a genuine fresh attempt.
       preloadingPromise = null;
       throw err;
     }

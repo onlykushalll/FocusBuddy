@@ -109,7 +109,40 @@ class MainActivity : AppCompatActivity() {
                 view: WebView?, request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url ?: return null
-                return assetLoader.shouldInterceptRequest(url)
+                val response = assetLoader.shouldInterceptRequest(url) ?: return null
+                // MediaPipe Tasks Vision's WASM runtime can use SharedArrayBuffer
+                // for multithreaded inference, which browsers gate behind
+                // cross-origin isolation (COOP/COEP). It likely degrades
+                // gracefully to single-threaded WASM without these (MediaPipe
+                // ships a nosimd/non-threaded variant for exactly that reason),
+                // but adding them removes the uncertainty for free. Wrapped in
+                // a try/catch that falls back to the unmodified response on any
+                // failure, so this can only add correctness, never break the
+                // asset serving that already works.
+                return try {
+                    val path = url.path ?: ""
+                    var mimeType = response.mimeType
+                    if (path.endsWith(".wasm") && mimeType != "application/wasm") {
+                        // Android's default MimeTypeMap doesn't reliably know
+                        // .wasm on all API levels/OEM builds; a wrong or missing
+                        // type here can break WASM streaming instantiation.
+                        mimeType = "application/wasm"
+                    }
+                    val headers = (response.responseHeaders ?: emptyMap()).toMutableMap()
+                    headers["Cross-Origin-Opener-Policy"] = "same-origin"
+                    headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+                    WebResourceResponse(
+                        mimeType,
+                        response.encoding,
+                        response.statusCode,
+                        response.reasonPhrase,
+                        headers,
+                        response.data
+                    )
+                } catch (e: Exception) {
+                    Log.w("FocusBuddy/WebView", "Failed to add cross-origin isolation headers, serving unmodified response", e)
+                    response
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
