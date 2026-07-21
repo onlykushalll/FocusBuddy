@@ -394,6 +394,7 @@ interface Buddy {
   requestStop: boolean;
   requestPause: boolean;
   isOnline: boolean;
+  lastActive?: any;
   securityAlert?: string | null;
   nativeAlert?: string | null;
   securityThreats?: {
@@ -1237,11 +1238,20 @@ function AdminFlow({ onBack, user }: { onBack: () => void, user: FirebaseUser, k
   const [loadingSession, setLoadingSession] = useState(false);
 
   const isBuddyOnline = (b: Buddy) => {
-    if (session?.status === 'lobby') {
-      return b.isOnline;
-    }
     const now = Date.now();
-    const isWebOnline = b.isOnline;
+    // lastActive is only populated once the heartbeat effect has fired at
+    // least once (buddies that joined before this field existed, or in
+    // their very first ~20s, won't have it yet) - fall back to trusting
+    // the raw isOnline flag in that case rather than treating them as
+    // offline by default.
+    const lastActiveMs = b.lastActive
+      ? (b.lastActive.toDate ? b.lastActive.toDate().getTime() : b.lastActive)
+      : null;
+    const heartbeatFresh = lastActiveMs === null || (now - lastActiveMs < 40000);
+    if (session?.status === 'lobby') {
+      return b.isOnline && heartbeatFresh;
+    }
+    const isWebOnline = b.isOnline && heartbeatFresh;
     let isNativeOnline = false;
     if (b.securityThreats?.timestamp) {
       if (now - b.securityThreats.timestamp < 40000) {
@@ -2288,6 +2298,30 @@ function BuddyFlow({ onBack, user, darkMode }: { onBack: () => void, user: Fireb
         updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), { isOnline: false }).catch(() => {});
       };
     }
+  }, [session?.id, buddy?.id]);
+
+  // Heartbeat: update lastActive every 20 seconds, mirroring the admin
+  // side's existing heartbeat pattern exactly. isOnline alone is not
+  // reliable - it's set true on mount/visible and false on the effect's
+  // own cleanup, which never runs on a hard kill (force-close, OS killing
+  // the process for memory, etc.), leaving isOnline permanently stuck true
+  // in Firestore with no way to tell a genuinely present buddy from one
+  // whose app was killed an hour ago. A heartbeat sidesteps clean-exit
+  // reliance entirely: the admin infers offline by staleness (see
+  // isBuddyOnline below), which naturally self-corrects the moment the
+  // heartbeat stops, no exit handler required.
+  useEffect(() => {
+    if (!session?.id || !buddy?.id) return;
+    const interval = setInterval(async () => {
+      try {
+        await updateDoc(doc(db, 'sessions', session.id, 'buddies', buddy.id), {
+          lastActive: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Buddy heartbeat error:", err);
+      }
+    }, 20000);
+    return () => clearInterval(interval);
   }, [session?.id, buddy?.id]);
 
   useEffect(() => {
