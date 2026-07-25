@@ -1123,6 +1123,7 @@ export function useFaceSecurityEngine(
   const darkFrameCount    = useRef(0);
   const buddyMissFrames   = useRef(0);
   const spoofFrameCount   = useRef(0);
+  const lastReportedDetectionErrorRef = useRef<string | null>(null);
   const prevStateRef      = useRef<SessionState>('IDLE');
   const registrationBuf   = useRef<number[][]>([]);
   const isRegistering     = useRef(false);
@@ -1231,7 +1232,19 @@ export function useFaceSecurityEngine(
     let detectedFaces: any[] = [];
     try {
       detectedFaces = await model.estimateFaces(video);
-    } catch {
+      lastReportedDetectionErrorRef.current = null;
+    } catch (err) {
+      // A persistent error (e.g. native detection reporting a camera bind
+      // failure) means this branch would otherwise fire every single frame
+      // forever and get silently discarded, which is exactly the "stuck
+      // with no visible error" experience this whole session has been
+      // trying to eliminate. Report each distinct error once, not every
+      // frame - and only once (not per-frame) so it can't spam onError.
+      const msg = formatCaughtError(err);
+      if (lastReportedDetectionErrorRef.current !== msg) {
+        lastReportedDetectionErrorRef.current = msg;
+        onEngineErrorRef.current?.(`Detection error: ${msg}`);
+      }
       return;
     }
 

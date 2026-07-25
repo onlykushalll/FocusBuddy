@@ -230,12 +230,23 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (GlobalState.isSessionActive) {
             startAnalyzerService("ACTION_STOP_CAMERA")
+            // Rebind native landmark detection now that FaceAnalyzerService
+            // is releasing its own CameraX binding - both are native
+            // CameraX consumers of the same camera within this process, so
+            // they must not overlap (unlike the WebView-vs-native question,
+            // which is genuinely uncertain, two native CameraX bindings on
+            // the same camera in the same process is a real, known conflict
+            // risk, not a maybe).
+            nativeFaceDetector?.bindCamera(this)
         }
     }
 
     override fun onPause() {
         super.onPause()
         if (GlobalState.isSessionActive) {
+            // Release native's camera binding before handing off to
+            // FaceAnalyzerService, for the same reason as above.
+            nativeFaceDetector?.unbindCamera()
             startAnalyzerService("ACTION_START_CAMERA")
         }
     }

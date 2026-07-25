@@ -82,7 +82,6 @@ const nativeFaceModel: FaceModel = {
 
 let preloadingPromise: Promise<{ detector: FaceModel | null; fallback: FaceModel | null; fallbackActive: boolean }> | null = null;
 let loadStatus: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
-let nativeDetectionActive = false;
 
 export function getModelLoadStatus(): 'idle' | 'loading' | 'ready' | 'error' {
   return loadStatus;
@@ -139,17 +138,29 @@ export function isUsingFallback(): boolean {
 }
 
 /**
- * Starts (or resumes) native camera detection. Idempotent - safe to call
- * even if already active. Call at the exact same points the app already
- * starts its own getUserMedia camera stream (session becoming active,
- * registration starting), so the native camera consumer's lifecycle
- * mirrors the WebView's own stream instead of opening early/eagerly.
+ * Starts (or resumes) native camera detection. Call at the exact same
+ * points the app already starts its own getUserMedia camera stream
+ * (session becoming active, registration starting), so the native camera
+ * consumer's lifecycle mirrors the WebView's own stream instead of
+ * opening early/eagerly.
+ *
+ * Deliberately has no "already active" guard on this side: an earlier
+ * version tracked activeness with a module-level flag, but that flag got
+ * set to true even when the underlying native call failed (e.g. camera
+ * permission denied) and module-level state survives a component
+ * remount - so after a real failure, hitting the app's own Retry button
+ * would silently no-op instead of actually retrying, leaving the user
+ * stuck even after fixing the underlying problem. NativeFaceDetector.kt's
+ * bindCamera()/unbindCamera() are themselves already safely idempotent
+ * (unbindAll() before rebinding, safe no-op if nothing's bound) - that's
+ * the right place for this guarantee to live, not here.
  */
 export function startNativeDetection(): void {
-  if (nativeDetectionActive) return;
   const token = window.Android?.getSessionToken?.() ?? '';
+  // Fresh start: don't keep surfacing a stale error from a previous
+  // attempt while waiting for this attempt's first real result.
+  latestError = null;
   window.Android?.startNativeFaceDetection?.(token);
-  nativeDetectionActive = true;
 }
 
 /**
@@ -158,7 +169,5 @@ export function startNativeDetection(): void {
  * so native doesn't hold the camera open longer than needed.
  */
 export function stopNativeDetection(): void {
-  if (!nativeDetectionActive) return;
   window.Android?.stopNativeFaceDetection?.();
-  nativeDetectionActive = false;
 }
