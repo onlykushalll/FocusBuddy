@@ -15,7 +15,17 @@ google-services.json
 # Android Build Outputs & Gradle Caches
 .gradle/
 **/build/
-android/app/src/main/assets/
+android/app/src/main/assets/*
+# Exception: native_face/ is a permanent source asset (the on-device
+# MediaPipe Face Landmarker model for the native detection pipeline),
+# not a build-pipeline-generated folder like the rest of assets/ - it
+# must be committed or native face detection breaks on any fresh clone.
+# Note: the parent must be ignored via a glob (assets/*), not a bare
+# directory match (assets/) - git cannot un-ignore anything inside a
+# directory that's ignored at the directory level, only inside one
+# ignored via glob on its contents.
+!android/app/src/main/assets/native_face
+!android/app/src/main/assets/native_face/**
 android/GradleWelcomeOutputNormalizer.groovy
 android/GradleWorkerMain.java
 android/GradleWrapperMain.java

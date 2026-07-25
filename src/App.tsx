@@ -89,7 +89,10 @@ declare global {
       openAppSettings?: () => void;
       isCameraPermissionGranted?: () => boolean;
       isNotificationPermissionGranted?: () => boolean;
+      startNativeFaceDetection?: (sessionToken: string) => void;
+      stopNativeFaceDetection?: () => void;
     };
+    __nativeFaceResult?: (json: string) => void;
   }
 }
 

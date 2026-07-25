@@ -1,33 +1,31 @@
-// Migrated off the legacy MediaPipe "Solutions" web runtime
-// (@tensorflow-models/face-landmarks-detection + face-detection, both
-// running via runtime: 'mediapipe') onto MediaPipe's current, actively
-// maintained Tasks Vision API (@mediapipe/tasks-vision: FaceLandmarker +
-// FaceDetector).
+// Native-backed face detection bridge.
 //
-// Why: extensive real on-device testing (both here and independently via
-// Codex with live ADB access to the same phone) ruled out bundling,
-// chunking, minification, and dynamic-vs-static imports as the cause of
-// "X is not a function" during model load. The failure reproduced
-// identically across every one of those variants, inside a single merged
-// chunk, in both the primary (FaceMesh) and fallback (BlazeFace) code
-// paths - strong evidence the legacy Solutions runtime itself has a real
-// incompatibility with this WebView, not something fixable at the bundler
-// layer. Tasks Vision is a different underlying loading mechanism
-// entirely (no dependency on TF.js at all), not just another bundling
-// variant of the same code.
+// The actual camera capture and landmark detection both run natively in
+// Kotlin (NativeFaceDetector.kt, via CameraX + MediaPipe's on-device
+// Android Face Landmarker SDK) - real device testing (here and
+// independently via Codex with live ADB access) showed the same class of
+// "X is not a function" failure across both the legacy MediaPipe
+// Solutions runtime AND the current Tasks Vision WASM runtime, in the
+// same WebView, so detection itself no longer runs in JS/WASM at all.
 //
-// Everything downstream of this file - the liveness engine, temporal
-// consensus buffer, dual-metric identity matching, multi-pose enrollment -
-// is UNCHANGED. Those all operate on the same Kps = {x,y,z}[] shape,
-// indexed positionally (LM.NOSE_TIP etc.) against MediaPipe's canonical
-// 478-point face mesh topology, which Tasks Vision preserves exactly. The
-// two estimateFaces() adapters below exist specifically so none of that
-// code has to know anything changed.
-import {
-  FilesetResolver,
-  FaceLandmarker,
-  FaceDetector,
-} from '@mediapipe/tasks-vision';
+// This file's only job is to bridge native-pushed landmark results into
+// the exact same {detector, fallback, fallbackActive} / estimateFaces()
+// shape the rest of the app already expects, so FaceSecurityEngine.tsx's
+// liveness engine, temporal consensus buffer, dual-metric matching, and
+// multi-pose enrollment logic need zero changes - they still call
+// model.estimateFaces(video) on the same schedule as before, they just
+// receive native-sourced landmarks instead of WASM-sourced ones.
+//
+// Deliberately does NOT touch the WebView's own getUserMedia camera
+// access, the visible <video> preview, or the pixel-analysis anti-
+// spoofing layer (rPPG, moire/replay/texture checks) in
+// FaceSecurityEngine.tsx - none of that ever depended on MediaPipe/WASM,
+// none of it was broken, so none of it changes. Native runs as a second,
+// independent camera consumer purely for landmark detection, started and
+// stopped at the exact same points the app already starts/stops its own
+// camera stream (see startNativeDetection/stopNativeDetection below) -
+// NOT eagerly during preload, matching the original app's behavior of
+// never opening the camera before the user actually needs it.
 
 interface AdaptedFace {
   keypoints: { x: number; y: number; z?: number }[];
@@ -38,110 +36,82 @@ interface FaceModel {
   estimateFaces(video: HTMLVideoElement): Promise<AdaptedFace[]>;
 }
 
-// The old API returned keypoints in pixel space (matching the video's
-// native dimensions), not normalized [0,1]. Tasks Vision's landmarks are
-// normalized. Converting back to pixel space keeps every downstream
-// consumer - descriptor math (scale-invariant, so this wouldn't have
-// mattered), HUD box rendering (which does need real pixel coordinates) -
-// working exactly as before, with no behavioral difference to account for.
-function toPixelSpace(l: { x: number; y: number; z?: number }, video: HTMLVideoElement) {
-  return { x: l.x * video.videoWidth, y: l.y * video.videoHeight, z: (l.z ?? 0) * video.videoWidth };
-}
+let latestFaces: AdaptedFace[] = [];
+let latestError: string | null = null;
 
-function wrapLandmarker(landmarker: FaceLandmarker): FaceModel {
-  return {
-    async estimateFaces(video: HTMLVideoElement): Promise<AdaptedFace[]> {
-      const result = landmarker.detectForVideo(video, performance.now());
-      return (result.faceLandmarks || []).map((landmarks): AdaptedFace => {
-        const keypoints = landmarks.map(l => toPixelSpace(l, video));
-        // Tasks Vision doesn't hand back a bounding box for FaceLandmarker
-        // (only for FaceDetector) - deriving one from landmark extents is
-        // a faithful equivalent for the HUD overlay, which is all the old
-        // box field was ever used for.
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const p of keypoints) {
-          if (p.x < minX) minX = p.x;
-          if (p.x > maxX) maxX = p.x;
-          if (p.y < minY) minY = p.y;
-          if (p.y > maxY) maxY = p.y;
-        }
-        return { keypoints, box: { xMin: minX, yMin: minY, width: maxX - minX, height: maxY - minY } };
-      });
-    },
-  };
-}
+// Registered once, globally - the App.tsx-owned Window.Android interface
+// declaration already types window.Android; this file just needs the two
+// native-bridge methods added there (startNativeFaceDetection,
+// stopNativeFaceDetection) rather than declaring a competing/conflicting
+// global interface of its own.
+window.__nativeFaceResult = (json: string) => {
+  let parsed: { type?: string; faces?: unknown; message?: string };
+  try {
+    parsed = JSON.parse(json);
+  } catch (e) {
+    console.error('Failed to parse native face result JSON:', e, json);
+    return;
+  }
 
-function wrapDetector(detector: FaceDetector): FaceModel {
-  return {
-    async estimateFaces(video: HTMLVideoElement): Promise<AdaptedFace[]> {
-      const result = detector.detectForVideo(video, performance.now());
-      return (result.detections || []).map((d): AdaptedFace => {
-        const keypoints = (d.keypoints || []).map(k => toPixelSpace({ x: k.x, y: k.y, z: 0 }, video));
-        const bb = d.boundingBox;
-        return {
-          keypoints,
-          box: bb ? { xMin: bb.originX, yMin: bb.originY, width: bb.width, height: bb.height } : undefined,
-        };
-      });
-    },
-  };
-}
+  if (parsed.type === 'faces') {
+    const rawFaces = Array.isArray(parsed.faces) ? parsed.faces : [];
+    latestFaces = rawFaces.map((face) => ({
+      keypoints: Array.isArray(face)
+        ? face.map((p: { x: number; y: number; z?: number }) => ({ x: p.x, y: p.y, z: p.z }))
+        : [],
+    }));
+    latestError = null;
+  } else if (parsed.type === 'error') {
+    latestError = parsed.message || 'Unknown native face detector error';
+    console.error('Native face detector reported an error:', latestError);
+  }
+};
+
+const nativeFaceModel: FaceModel = {
+  // The video parameter is part of the shared FaceModel interface (the
+  // old WASM-backed implementation needed it; this one doesn't, since
+  // native has its own independent camera frames) - intentionally
+  // unused here.
+  async estimateFaces(_video: HTMLVideoElement): Promise<AdaptedFace[]> {
+    if (latestError) {
+      throw new Error(latestError);
+    }
+    return latestFaces;
+  },
+};
 
 let preloadingPromise: Promise<{ detector: FaceModel | null; fallback: FaceModel | null; fallbackActive: boolean }> | null = null;
-let detectorInstance: FaceModel | null = null;
-let fallbackInstance: FaceModel | null = null;
-let usingFallback = false;
 let loadStatus: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+let nativeDetectionActive = false;
 
 export function getModelLoadStatus(): 'idle' | 'loading' | 'ready' | 'error' {
   return loadStatus;
 }
 
+/**
+ * Confirms the native detection bridge is available. Deliberately does
+ * NOT start the camera - the model itself already loads eagerly on the
+ * Kotlin side (NativeFaceDetector.setup(), called from
+ * MainActivity.onCreate()) independent of anything JS does, so there's
+ * no real async "model loading" left to wait for here the way the old
+ * WASM version had. Camera access stays deferred to
+ * startNativeDetection(), called from the exact same places the app
+ * already starts its own getUserMedia stream.
+ */
 export function preloadModels(): Promise<{ detector: FaceModel | null; fallback: FaceModel | null; fallbackActive: boolean }> {
   if (preloadingPromise) return preloadingPromise;
 
   loadStatus = 'loading';
   preloadingPromise = (async () => {
     try {
-      // Both models share one WASM fileset - resolved once, reused for both.
-      // Bundled offline at /mediapipe (same WebViewAssetLoader path prefix
-      // that already serves these files correctly - no native/Kotlin
-      // changes needed).
-      const vision = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
-
-      try {
-        const faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: '/mediapipe/face_landmarker.task',
-            delegate: 'CPU',
-          },
-          runningMode: 'VIDEO',
-          numFaces: 4,
-          outputFaceBlendshapes: false,
-          outputFacialTransformationMatrixes: false,
-        });
-        detectorInstance = wrapLandmarker(faceLandmarker);
-        usingFallback = false;
-        console.log('FaceLandmarker loaded successfully via preloader');
-      } catch (meshErr) {
-        console.error('FaceLandmarker load failed during preloading, trying FaceDetector:', meshErr);
-        usingFallback = true;
-        const faceDetector = await FaceDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: '/mediapipe/blaze_face_short_range.tflite',
-            delegate: 'CPU',
-          },
-          runningMode: 'VIDEO',
-        });
-        fallbackInstance = wrapDetector(faceDetector);
-        console.log('FaceDetector loaded successfully via preloader (fallback)');
+      if (!window.Android?.startNativeFaceDetection) {
+        throw new Error('Native face detection bridge unavailable (window.Android.startNativeFaceDetection missing) - are you running outside the Android app?');
       }
-
       loadStatus = 'ready';
-      return { detector: detectorInstance, fallback: fallbackInstance, fallbackActive: usingFallback };
+      return { detector: nativeFaceModel, fallback: null, fallbackActive: false };
     } catch (err) {
       loadStatus = 'error';
-      console.error('Preloading models failed:', err);
+      console.error('Native face detector preload check failed:', err);
       // Don't let a single failed attempt permanently poison every future
       // call for the rest of the app's process lifetime - reset the cache
       // so the next call gets a genuine fresh attempt.
@@ -153,14 +123,42 @@ export function preloadModels(): Promise<{ detector: FaceModel | null; fallback:
   return preloadingPromise;
 }
 
-export function getDetector() {
-  return detectorInstance;
+export function getDetector(): FaceModel | null {
+  return loadStatus === 'ready' ? nativeFaceModel : null;
 }
 
-export function getFallbackDetector() {
-  return fallbackInstance;
+export function getFallbackDetector(): FaceModel | null {
+  // No JS-side fallback anymore - native's own FaceLandmarker-then-
+  // FaceDetector fallback (see NativeFaceDetector.kt's setup()) happens
+  // entirely on the Kotlin side and is transparent to this layer.
+  return null;
 }
 
 export function isUsingFallback(): boolean {
-  return usingFallback;
+  return false;
+}
+
+/**
+ * Starts (or resumes) native camera detection. Idempotent - safe to call
+ * even if already active. Call at the exact same points the app already
+ * starts its own getUserMedia camera stream (session becoming active,
+ * registration starting), so the native camera consumer's lifecycle
+ * mirrors the WebView's own stream instead of opening early/eagerly.
+ */
+export function startNativeDetection(): void {
+  if (nativeDetectionActive) return;
+  const token = window.Android?.getSessionToken?.() ?? '';
+  window.Android?.startNativeFaceDetection?.(token);
+  nativeDetectionActive = true;
+}
+
+/**
+ * Stops native camera detection, releasing that camera consumer. Call at
+ * the exact same points the app already releases its own camera track,
+ * so native doesn't hold the camera open longer than needed.
+ */
+export function stopNativeDetection(): void {
+  if (!nativeDetectionActive) return;
+  window.Android?.stopNativeFaceDetection?.();
+  nativeDetectionActive = false;
 }

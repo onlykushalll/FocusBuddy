@@ -32,7 +32,7 @@ import React, {
   useState,
   forwardRef,
 } from 'react';
-import { preloadModels } from '../lib/modelPreloader';
+import { preloadModels, startNativeDetection, stopNativeDetection } from '../lib/modelPreloader';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §1  TYPES & CONSTANTS
@@ -147,6 +147,36 @@ const REGISTRATION_SAMPLES   = 12;     // 4 center, 4 left, 4 right
 const POSE_HINT_AFTER_MS     = 6000;   // show an encouraging hint
 const POSE_RELAX_AFTER_MS    = 12000;  // start relaxing the yaw threshold
 const POSE_MIN_YAW           = 0.025;  // floor — still a real turn, just a smaller one
+
+// Formats a caught value into a diagnostic string, without assuming it's a
+// real Error. `(err as Error).message` was a type assertion, not a runtime
+// check - it compiles fine but silently produces "undefined" the moment
+// something throws a value that isn't a real Error (a common outcome when
+// an exception crosses a native/WASM boundary: aborts, assertion failures,
+// and instantiation errors are frequently raw numbers, plain objects, or
+// strings rather than proper Error instances). Tries several shapes before
+// giving up, and the final fallback at least names the shape it saw instead
+// of a bare "undefined".
+function formatCaughtError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.stack ? `${err.message}\n${err.stack}` : err.message;
+  }
+  if (typeof err === 'string') return err;
+  if (typeof err === 'number' || typeof err === 'boolean') return String(err);
+  if (err && typeof err === 'object') {
+    const maybeMessage = (err as Record<string, unknown>).message;
+    if (typeof maybeMessage === 'string' && maybeMessage.length > 0) return maybeMessage;
+    try {
+      const json = JSON.stringify(err);
+      if (json && json !== '{}') return json;
+    } catch {
+      // Circular or otherwise non-serializable - fall through.
+    }
+    return `[unserializable ${Object.prototype.toString.call(err)}]`;
+  }
+  return `[thrown non-error value: ${String(err)}]`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // §2  GEOMETRY & DESCRIPTOR HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1131,7 +1161,7 @@ export function useFaceSecurityEngine(
 
       setState(s => ({ ...s, isModelReady: true }));
     } catch (err) {
-      onEngineErrorRef.current?.(`Model load failed: ${(err as Error).message}`);
+      onEngineErrorRef.current?.(`Model load failed: ${formatCaughtError(err)}`);
     }
   }, []);
 
@@ -1150,8 +1180,13 @@ export function useFaceSecurityEngine(
       });
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
+      // Native landmark detection runs as a second, independent camera
+      // consumer alongside this one (see modelPreloader.ts) - started
+      // here so its lifecycle mirrors this stream's exactly, rather than
+      // opening earlier/eagerly.
+      startNativeDetection();
     } catch (err) {
-      onEngineErrorRef.current?.(`Camera error: ${(err as Error).message}`);
+      onEngineErrorRef.current?.(`Camera error: ${formatCaughtError(err)}`);
     }
   }, [videoRef]);
 
@@ -1606,6 +1641,7 @@ export function useFaceSecurityEngine(
         stream.getTracks().forEach(t => t.stop());
         videoRef.current.srcObject = null;
       }
+      stopNativeDetection();
     }
 
     return () => {

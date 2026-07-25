@@ -80,6 +80,12 @@ dependencies {
     
     // ML Kit Face Detection
     implementation("com.google.mlkit:face-detection:16.1.5")
+
+    // MediaPipe Tasks Vision (native Face Landmarker) - same 478-point model
+    // family as the web migration, so the existing descriptor/liveness math
+    // in FaceSecurityEngine.tsx needs zero changes, only the delivery
+    // mechanism (native bridge push instead of WASM in-WebView call) differs.
+    implementation("com.google.mediapipe:tasks-vision:latest.release")
     
     // Biometric
     implementation("androidx.biometric:biometric:1.1.0")

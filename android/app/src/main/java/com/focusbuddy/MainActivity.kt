@@ -38,6 +38,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import com.focusbuddy.managers.WhitelistManager
 import com.focusbuddy.services.FaceAnalyzerService
+import com.focusbuddy.facedetection.NativeFaceDetector
 import com.focusbuddy.R
 
 /**
@@ -46,6 +47,7 @@ import com.focusbuddy.R
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private var nativeFaceDetector: NativeFaceDetector? = null
     private val cameraPermissionCode = 100
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -209,6 +211,19 @@ class MainActivity : AppCompatActivity() {
 
         webView.addJavascriptInterface(AndroidBridge(), "Android")
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+
+        // Eagerly load the native face-detection model now - this only
+        // loads the model into memory, it does NOT touch the camera (that
+        // needs CAMERA permission, handled separately at the bridge call
+        // site below since this app has no onRequestPermissionsResult
+        // callback to hook a reliable "permission just granted" moment
+        // onto). Mirrors the existing "parallel loading during splash"
+        // philosophy from the web-based model preloader.
+        nativeFaceDetector = NativeFaceDetector(this) { json ->
+            runOnUiThread {
+                webView.evaluateJavascript("window.__nativeFaceResult && window.__nativeFaceResult(${JSONObject.quote(json)})", null)
+            }
+        }.also { it.setup() }
     }
 
     override fun onResume() {
@@ -223,6 +238,11 @@ class MainActivity : AppCompatActivity() {
         if (GlobalState.isSessionActive) {
             startAnalyzerService("ACTION_START_CAMERA")
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        nativeFaceDetector?.close()
     }
 
     private fun startAnalyzerService(actionStr: String) {
@@ -402,6 +422,36 @@ class MainActivity : AppCompatActivity() {
             GlobalState.isSessionActive = false
             stopService(Intent(this@MainActivity, FaceAnalyzerService::class.java))
         }
+
+        @JavascriptInterface
+        fun startNativeFaceDetection(sessionToken: String) {
+            if (!GlobalState.validateSessionToken(sessionToken)) {
+                Log.w("FocusBuddy/Bridge", "startNativeFaceDetection rejected: invalid token")
+                return
+            }
+            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w("FocusBuddy/Bridge", "startNativeFaceDetection: camera permission not granted")
+                runOnUiThread {
+                    webView.evaluateJavascript(
+                        "window.__nativeFaceResult && window.__nativeFaceResult(${JSONObject.quote(errorResultJson("Camera permission not granted"))})",
+                        null
+                    )
+                }
+                return
+            }
+            runOnUiThread {
+                nativeFaceDetector?.bindCamera(this@MainActivity)
+            }
+        }
+
+        @JavascriptInterface
+        fun stopNativeFaceDetection() {
+            runOnUiThread {
+                nativeFaceDetector?.unbindCamera()
+            }
+        }
         @JavascriptInterface
         fun getInstalledApps(): String {
             val pm = packageManager
@@ -510,6 +560,13 @@ class MainActivity : AppCompatActivity() {
                 putExtra(Intent.EXTRA_TEXT, code)
             }
             startActivity(Intent.createChooser(intent, "Share"))
+        }
+
+        private fun errorResultJson(message: String): String {
+            val json = JSONObject()
+            json.put("type", "error")
+            json.put("message", message)
+            return json.toString()
         }
 
         private fun drawableToBitmap(drawable: Drawable): Bitmap {
