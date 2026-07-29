@@ -38,6 +38,9 @@ interface FaceModel {
 
 let latestFaces: AdaptedFace[] = [];
 let latestError: string | null = null;
+let hasLoggedFirstNativeResult = false;
+let nativeResultCount = 0;
+let lastNativeResultLogMs = 0;
 
 // Registered once, globally - the App.tsx-owned Window.Android interface
 // declaration already types window.Android; this file just needs the two
@@ -61,6 +64,24 @@ window.__nativeFaceResult = (json: string) => {
         : [],
     }));
     latestError = null;
+
+    // Diagnostic visibility: there was previously zero JS-visible logging
+    // on this success path at all, meaning "native is alive but always
+    // reporting 0 faces" and "native never runs at all" were completely
+    // indistinguishable from the deviceLogs remote-logging system. Log
+    // once immediately (confirms the pipeline is alive at all), then at
+    // most once every 3s after that (confirms it's still alive and shows
+    // whether face count is ever non-zero), rather than every single
+    // frame (which would flood deviceLogs at up to ~15-30 calls/second).
+    nativeResultCount++;
+    const now = Date.now();
+    if (!hasLoggedFirstNativeResult) {
+      hasLoggedFirstNativeResult = true;
+      console.log(`Native face detector: first result received, ${latestFaces.length} face(s), ${latestFaces[0]?.keypoints.length ?? 0} keypoints`);
+    } else if (now - lastNativeResultLogMs > 3000) {
+      lastNativeResultLogMs = now;
+      console.log(`Native face detector: alive, result #${nativeResultCount}, ${latestFaces.length} face(s) currently`);
+    }
   } else if (parsed.type === 'error') {
     latestError = parsed.message || 'Unknown native face detector error';
     console.error('Native face detector reported an error:', latestError);
@@ -156,6 +177,8 @@ export function isUsingFallback(): boolean {
  * the right place for this guarantee to live, not here.
  */
 export function startNativeDetection(): void {
+  const bridgeAvailable = !!window.Android?.startNativeFaceDetection;
+  console.log(`startNativeDetection() called, bridge available: ${bridgeAvailable}`);
   const token = window.Android?.getSessionToken?.() ?? '';
   // Fresh start: don't keep surfacing a stale error from a previous
   // attempt while waiting for this attempt's first real result.
