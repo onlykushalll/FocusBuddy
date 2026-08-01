@@ -154,12 +154,42 @@ class NativeFaceDetector(
      * conventionally auto-mirrored by the browser. Skipping the mirror
      * here would flip the sense of left/right between the old and new
      * pipelines - a subtle correctness regression, not just a visual one.
+     *
+     * Also handles row stride padding explicitly. CameraX's RGBA_8888
+     * output format is documented as having padding on its single image
+     * plane on some device/resolution combinations - a naive
+     * copyPixelsFromBuffer() call assumes row stride exactly equals
+     * width * 4 bytes, which is not guaranteed. When it doesn't hold, a
+     * naive copy produces a diagonally-sheared, garbled bitmap with every
+     * row progressively misaligned - not a crash, just the model silently
+     * running on corrupted pixel data and finding no face, ever. This
+     * matches Google's own official reference sample's approach, which
+     * has this exact same gap; it likely just never hit padding on
+     * whichever devices/resolutions they tested against.
      */
     private fun imageProxyToOrientedBitmap(imageProxy: ImageProxy): Bitmap {
-        val bitmapBuffer = Bitmap.createBitmap(
-            imageProxy.width, imageProxy.height, Bitmap.Config.ARGB_8888
-        )
-        bitmapBuffer.copyPixelsFromBuffer(imageProxy.planes[0].buffer)
+        val plane = imageProxy.planes[0]
+        val pixelStride = plane.pixelStride
+        val rowStride = plane.rowStride
+        val rowPaddingBytes = rowStride - pixelStride * imageProxy.width
+
+        val bitmapBuffer = if (rowPaddingBytes == 0) {
+            // Tightly packed - safe to copy directly.
+            Bitmap.createBitmap(imageProxy.width, imageProxy.height, Bitmap.Config.ARGB_8888).apply {
+                copyPixelsFromBuffer(plane.buffer)
+            }
+        } else {
+            // Padded - build a bitmap sized to the actual (padded) row
+            // width so the buffer's real memory layout matches exactly,
+            // then crop back down to the true image width.
+            val paddedWidth = rowStride / pixelStride
+            val paddedBitmap = Bitmap.createBitmap(paddedWidth, imageProxy.height, Bitmap.Config.ARGB_8888).apply {
+                copyPixelsFromBuffer(plane.buffer)
+            }
+            Bitmap.createBitmap(paddedBitmap, 0, 0, imageProxy.width, imageProxy.height).also {
+                paddedBitmap.recycle()
+            }
+        }
 
         val matrix = Matrix().apply {
             postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
