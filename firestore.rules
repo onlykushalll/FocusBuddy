@@ -63,7 +63,7 @@ service cloud.firestore {
 
     match /sessions/{sessionId} {
       allow get: if isAuthenticated();
-      allow list: if isAuthenticated() && (resource.data.adminDeviceId == request.auth.uid);
+      allow list: if isAuthenticated() && (resource.data.adminDeviceId == request.auth.uid || (request.auth.uid in resource.data.buddyIds));
       
       allow create: if isAuthenticated() && 
                       isValidSession(request.resource.data) &&
