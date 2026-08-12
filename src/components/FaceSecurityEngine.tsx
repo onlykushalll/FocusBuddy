@@ -143,7 +143,9 @@ const SCORE_LOCK_THRESHOLD   = 0.85;   // verificationScore minimum
 const BUDDY_MATCH_THRESHOLD  = 0.82;   // cosine similarity for identity
 const BUDDY_EUCLIDEAN_THRESHOLD = 0.25; // Euclidean distance for identity (closer is better)
 const MOTION_VAR_THRESHOLD   = 400;    // pixel variance → adaptive FPS trigger
-const REGISTRATION_SAMPLES   = 12;     // 4 center, 4 left, 4 right
+const REGISTRATION_CAPTURE_PER_STAGE = 6;  // captured per pose stage - more than kept, so outliers can be dropped
+const REGISTRATION_SELECT_PER_STAGE  = 4;  // kept per pose stage after cohesion-based selection, matching the prior total exactly
+const REGISTRATION_SAMPLES   = REGISTRATION_CAPTURE_PER_STAGE * 3;  // 6 center, 6 left, 6 right
 const POSE_HINT_AFTER_MS     = 6000;   // show an encouraging hint
 const POSE_RELAX_AFTER_MS    = 12000;  // start relaxing the yaw threshold
 const POSE_MIN_YAW           = 0.025;  // floor — still a real turn, just a smaller one
@@ -255,6 +257,32 @@ function avgDescriptors(samples: number[][]): number[] {
   const out = new Array(len).fill(0);
   for (const s of samples) for (let i = 0; i < len; i++) out[i] += s[i];
   return out.map(v => v / samples.length);
+}
+
+/**
+ * Picks the `keep` most mutually-consistent samples out of a larger
+ * captured set, rejecting statistical outliers before averaging - the
+ * core idea behind a burst-capture-then-select enrollment approach
+ * (capture more than needed, then select for cohesion, rather than
+ * averaging everything indiscriminately). Scores each sample by its mean
+ * cosine similarity to every OTHER sample in the set; a sample that's an
+ * outlier (motion blur, a brief expression change, a lighting flicker
+ * that still happened to pass the liveness gate) will disagree with the
+ * rest of the batch and score lower, so it gets dropped rather than
+ * diluting the final averaged descriptor.
+ */
+function selectMostCohesive(samples: number[][], keep: number): number[][] {
+  if (samples.length <= keep) return samples;
+  const scored = samples.map((s, i) => {
+    let total = 0;
+    for (let j = 0; j < samples.length; j++) {
+      if (i === j) continue;
+      total += cosineSim(s, samples[j]);
+    }
+    return { sample: s, cohesion: total / (samples.length - 1) };
+  });
+  scored.sort((a, b) => b.cohesion - a.cohesion);
+  return scored.slice(0, keep).map(s => s.sample);
 }
 
 /** Mirrored JPEG snapshot of the current video frame, or '' on failure.
@@ -1272,7 +1300,7 @@ export function useFaceSecurityEngine(
         if (desc) {
           const yaw = getFaceYaw(kps);
           const currentCount = registrationBuf.current.length;
-          const stageIndex = currentCount < 4 ? 0 : currentCount < 8 ? 1 : 2;
+          const stageIndex = currentCount < REGISTRATION_CAPTURE_PER_STAGE ? 0 : currentCount < REGISTRATION_CAPTURE_PER_STAGE * 2 ? 1 : 2;
 
           // If stuck on the same stage for a while, progressively relax the
           // required yaw magnitude instead of waiting indefinitely — someone
@@ -1293,10 +1321,10 @@ export function useFaceSecurityEngine(
           let validPose = false;
           let prompt = 'LOOK CENTER';
 
-          if (currentCount < 4) {
+          if (currentCount < REGISTRATION_CAPTURE_PER_STAGE) {
             if (Math.abs(yaw) <= centerThreshold) validPose = true;
             prompt = showHint ? 'LOOK CENTER — hold steady' : 'LOOK CENTER';
-          } else if (currentCount < 8) {
+          } else if (currentCount < REGISTRATION_CAPTURE_PER_STAGE * 2) {
             if (yaw >= yawThreshold) validPose = true;
             prompt = showHint ? "TURN SLIGHTLY LEFT — a little goes a long way" : 'TURN SLIGHTLY LEFT';
           } else {
@@ -1310,25 +1338,25 @@ export function useFaceSecurityEngine(
 
             const nextCount = registrationBuf.current.length;
             let nextPrompt = prompt;
-            if (nextCount >= 4 && nextCount < 8) nextPrompt = 'TURN SLIGHTLY LEFT';
-            else if (nextCount >= 8 && nextCount < 12) nextPrompt = 'TURN SLIGHTLY RIGHT';
-            else if (nextCount >= 12) nextPrompt = 'PROCESSING...';
+            if (nextCount >= REGISTRATION_CAPTURE_PER_STAGE && nextCount < REGISTRATION_CAPTURE_PER_STAGE * 2) nextPrompt = 'TURN SLIGHTLY LEFT';
+            else if (nextCount >= REGISTRATION_CAPTURE_PER_STAGE * 2 && nextCount < REGISTRATION_SAMPLES) nextPrompt = 'TURN SLIGHTLY RIGHT';
+            else if (nextCount >= REGISTRATION_SAMPLES) nextPrompt = 'PROCESSING...';
 
             setState(s => ({ ...s, registrationProgress: progress, registrationPrompt: nextPrompt }));
 
             // Capture a snapshot at the end of each stage, not just once at the very
             // end — previously the single stored "identity photo" was whatever frame
             // happened to complete the RIGHT stage, i.e. the buddy mid-turn.
-            if (nextCount === 4 || nextCount === 8 || nextCount === 12) {
-              const poseKey = nextCount === 4 ? 'center' : nextCount === 8 ? 'left' : 'right';
+            if (nextCount === REGISTRATION_CAPTURE_PER_STAGE || nextCount === REGISTRATION_CAPTURE_PER_STAGE * 2 || nextCount === REGISTRATION_SAMPLES) {
+              const poseKey = nextCount === REGISTRATION_CAPTURE_PER_STAGE ? 'center' : nextCount === REGISTRATION_CAPTURE_PER_STAGE * 2 ? 'left' : 'right';
               const snap = captureRegistrationSnapshot(video);
               if (snap) registrationSnapshots.current[poseKey] = snap;
             }
 
             if (registrationBuf.current.length >= REGISTRATION_SAMPLES) {
-              const centerSamples = registrationBuf.current.slice(0, 4);
-              const leftSamples = registrationBuf.current.slice(4, 8);
-              const rightSamples = registrationBuf.current.slice(8, 12);
+              const centerSamples = selectMostCohesive(registrationBuf.current.slice(0, REGISTRATION_CAPTURE_PER_STAGE), REGISTRATION_SELECT_PER_STAGE);
+              const leftSamples = selectMostCohesive(registrationBuf.current.slice(REGISTRATION_CAPTURE_PER_STAGE, REGISTRATION_CAPTURE_PER_STAGE * 2), REGISTRATION_SELECT_PER_STAGE);
+              const rightSamples = selectMostCohesive(registrationBuf.current.slice(REGISTRATION_CAPTURE_PER_STAGE * 2, REGISTRATION_SAMPLES), REGISTRATION_SELECT_PER_STAGE);
 
               const finalMultiPose: MultiPoseDescriptor = {
                 center: avgDescriptors(centerSamples),
